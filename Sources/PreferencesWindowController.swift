@@ -247,7 +247,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     init(onChange: @escaping () -> Void) {
         self.onShortcutChange = onChange
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 650),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -288,6 +288,16 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func makeSearchSettingsView() -> NSView {
         let view = NSView()
+        let accessHeading = NSTextField(labelWithString: String(localized: "Full Disk Access"))
+        accessHeading.font = .boldSystemFont(ofSize: 14)
+        let accessHelp = NSTextField(wrappingLabelWithString: String(localized: "Full Disk Access is required for Spotlight searches. Without it, searches return no results. Enable FindAll in System Settings, then restart the app."))
+        accessHelp.textColor = .secondaryLabelColor
+        let openAccessSettings = NSButton(
+            title: String(localized: "Open Full Disk Access Settings"),
+            target: self,
+            action: #selector(openFullDiskAccessSettings(_:))
+        )
+
         let heading = NSTextField(labelWithString: String(localized: "Result Ordering"))
         heading.font = .boldSystemFont(ofSize: 17)
         let help = NSTextField(wrappingLabelWithString: String(localized: "Click a result-table header to choose the ordering. Folder priority and folders-first are independent options."))
@@ -298,9 +308,9 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         foldersFirstButton.target = self
         foldersFirstButton.action = #selector(foldersFirstChanged(_:))
 
-        let folderHeading = NSTextField(labelWithString: String(localized: "Search Folders and Priorities"))
+        let folderHeading = NSTextField(labelWithString: String(localized: "Saved Folders and Ranking"))
         folderHeading.font = .boldSystemFont(ofSize: 14)
-        let folderHelp = NSTextField(wrappingLabelWithString: String(localized: "Pinned folders rank above Preferred and Normal folders. Within one priority, folders higher in this list rank first."))
+        let folderHelp = NSTextField(wrappingLabelWithString: String(localized: "Saved folders appear in the Scope menu only when you add them explicitly. Pinned folders rank above Preferred folders; Normal folders receive no ranking boost."))
         folderHelp.textColor = .secondaryLabelColor
 
         configureRulesTable()
@@ -317,12 +327,19 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        [heading, help, prioritizeFolderRulesButton, foldersFirstButton, folderHeading, folderHelp, scrollView, buttons].forEach {
+        [accessHeading, accessHelp, openAccessSettings, heading, help, prioritizeFolderRulesButton, foldersFirstButton, folderHeading, folderHelp, scrollView, buttons].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
         NSLayoutConstraint.activate([
-            heading.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
+            accessHeading.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
+            accessHeading.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            accessHelp.topAnchor.constraint(equalTo: accessHeading.bottomAnchor, constant: 6),
+            accessHelp.leadingAnchor.constraint(equalTo: accessHeading.leadingAnchor),
+            accessHelp.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            openAccessSettings.topAnchor.constraint(equalTo: accessHelp.bottomAnchor, constant: 8),
+            openAccessSettings.leadingAnchor.constraint(equalTo: accessHeading.leadingAnchor),
+            heading.topAnchor.constraint(equalTo: openAccessSettings.bottomAnchor, constant: 18),
             heading.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
             help.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
             help.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
@@ -480,6 +497,10 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     @objc private func foldersFirstChanged(_ sender: NSButton) {
         SearchPreferences.foldersFirst = sender.state == .on
+    }
+
+    @objc private func openFullDiskAccessSettings(_ sender: Any?) {
+        FullDiskAccessSupport.openSystemSettings()
     }
 
     @objc private func addFolderRule(_ sender: Any?) {

@@ -206,9 +206,6 @@ enum SearchPreferences {
             if let data = try? JSONEncoder().encode(newValue) {
                 UserDefaults.standard.set(data, forKey: Key.folderRules)
             }
-            if let scopePath, !newValue.contains(where: { $0.path == scopePath }) {
-                UserDefaults.standard.removeObject(forKey: Key.scopePath)
-            }
             notify()
         }
     }
@@ -226,6 +223,7 @@ enum SearchPreferences {
     static func ranking(for url: URL, rules: [FolderRule]) -> (priority: Int, ruleOrder: Int)? {
         let itemComponents = url.standardizedFileURL.pathComponents
         return rules.enumerated().compactMap { index, rule -> (priority: Int, ruleOrder: Int)? in
+            guard rule.priority != .normal else { return nil }
             let folderComponents = URL(fileURLWithPath: rule.path).standardizedFileURL.pathComponents
             guard itemComponents.count >= folderComponents.count,
                   Array(itemComponents.prefix(folderComponents.count)) == folderComponents else { return nil }
@@ -240,5 +238,16 @@ enum SearchPreferences {
 
     private static func notify() {
         NotificationCenter.default.post(name: didChangeNotification, object: nil)
+    }
+}
+
+enum FullDiskAccessSupport {
+    static func openSystemSettings() {
+        let workspace = NSWorkspace.shared
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
+           workspace.open(url) {
+            return
+        }
+        workspace.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
     }
 }
