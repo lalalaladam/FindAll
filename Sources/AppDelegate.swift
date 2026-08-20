@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let fileMenu = addMenu(to: mainMenu, title: String(localized: "File"))
         addCommandItem(to: fileMenu, title: String(localized: "Open"), command: .open, action: #selector(MainWindowController.openSelection(_:)))
-        addCommandItem(to: fileMenu, title: String(localized: "Reveal in Finder"), command: .reveal, action: #selector(MainWindowController.revealSelection(_:)))
+        addCommandItem(to: fileMenu, title: String(localized: "Show in File Manager"), command: .reveal, action: #selector(MainWindowController.revealSelection(_:)))
         addCommandItem(to: fileMenu, title: String(localized: "Copy Path"), command: .copyPath, action: #selector(MainWindowController.copyPath(_:)))
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: String(localized: "Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
@@ -102,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindowController.showAndFocusSearch()
     }
 
-    @objc private func showPreferences(_ sender: Any?) {
+    @objc func showPreferences(_ sender: Any?) {
         if preferencesWindowController == nil {
             preferencesWindowController = PreferencesWindowController { [weak self] in
                 self?.refreshShortcutConfiguration()
@@ -146,6 +146,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let identifier = EventHotKeyID(signature: OSType(0x46414C4C), id: 1)
         let status = RegisterEventHotKey(UInt32(shortcut.keyCode), carbonModifiers(shortcut.modifiers), identifier, GetApplicationEventTarget(), 0, &hotKeyRef)
         if status != noErr { NSSound.beep() }
+    }
+
+    func validateGlobalShortcut(_ shortcut: KeyboardShortcut) -> OSStatus {
+        let current = ShortcutSettings.shortcut(for: .globalToggle)
+        if current.keyCode == shortcut.keyCode,
+           current.modifiers == shortcut.modifiers,
+           hotKeyRef != nil { return noErr }
+
+        var candidateRef: EventHotKeyRef?
+        let identifier = EventHotKeyID(signature: OSType(0x46414C4C), id: 2)
+        let status = RegisterEventHotKey(
+            UInt32(shortcut.keyCode),
+            carbonModifiers(shortcut.modifiers),
+            identifier,
+            GetApplicationEventTarget(),
+            0,
+            &candidateRef
+        )
+        if let candidateRef { UnregisterEventHotKey(candidateRef) }
+        return status
     }
 
     private func carbonModifiers(_ flags: NSEvent.ModifierFlags) -> UInt32 {

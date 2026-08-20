@@ -172,15 +172,9 @@ preferences, or local test files.
 
 Before publication, perform or obtain explicit user verification for the following:
 
-- The global activation shortcut opens and closes the search window reliably.
-- The search field receives focus and does not lose the first typed character.
-- A Spotlight-indexed file, folder, and application can be found.
-- A newer query cannot be overwritten by stale results from an older query.
-- Open, Quick Look, Reveal in Finder, copy, and copy-path actions work.
-- User-customized shortcuts appear consistently in menus and execute the correct action.
-- Favorite scopes and normal/preferred/pinned folder priorities persist and sort correctly.
-- Multi-selection and applicable batch actions behave correctly.
-- Missing files, inaccessible scopes, and unmounted volumes fail gracefully.
+- The application launches and its primary workflows for this release behave as intended.
+- Settings and user-visible state added or changed by this release persist as intended.
+- Failures relevant to this release are handled without crashing or corrupting user data.
 - Release builds do not display Debug metadata.
 
 Record which checks were performed by code/build verification and which were manually

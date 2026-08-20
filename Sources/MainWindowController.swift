@@ -3,11 +3,30 @@ import QuickLookUI
 
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation {
     private let searchField = NSSearchField()
+    private let scopePopup = NSPopUpButton()
+    private let categoryPopup = NSPopUpButton()
+    private let prioritizeFoldersButton = NSButton(checkboxWithTitle: String(localized: "Prioritize folder rules"), target: nil, action: nil)
+    private let foldersFirstButton = NSButton(checkboxWithTitle: String(localized: "Folders first"), target: nil, action: nil)
+    private let settingsButton = NSButton()
+    private let scrollView = NSScrollView()
     private let tableView = ActionTableView()
     private let statusLabel = NSTextField(labelWithString: String(localized: "Type a query and press Return"))
     private let spinner = NSProgressIndicator()
+    private let keepOnTopButton = NSButton(checkboxWithTitle: String(localized: "Keep on top in current Space"), target: nil, action: nil)
+    private let allSpacesButton = NSButton(checkboxWithTitle: String(localized: "Show on all Spaces"), target: nil, action: nil)
     private let searchService = FileSearchService()
+    private var candidates: [SearchResult] = []
     private var results: [SearchResult] = []
+    private var lastSearchRequest: SearchRequest?
+    private var preferencesObserver: NSObjectProtocol?
+    private var isAdjustingColumns = false
+    private var isSynchronizingSort = false
+    private var lastColumnWidths: [NSUserInterfaceItemIdentifier: CGFloat] = [:]
+
+    private enum WindowPreferenceKey {
+        static let keepOnTop = "window.keepOnTop"
+        static let showOnAllSpaces = "window.showOnAllSpaces"
+    }
 
     init() {
         let window = NSWindow(
@@ -17,20 +36,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             defer: false
         )
         window.title = "FindAll"
-        window.minSize = NSSize(width: 680, height: 400)
+        window.titleVisibility = .hidden
+        window.minSize = NSSize(width: 720, height: 420)
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
         buildInterface()
+        restoreWindowBehavior()
         bindSearch()
+        preferencesObserver = NotificationCenter.default.addObserver(
+            forName: SearchPreferences.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.preferencesDidChange()
+        }
     }
 
     required init?(coder: NSCoder) { nil }
 
+    deinit {
+        if let preferencesObserver { NotificationCenter.default.removeObserver(preferencesObserver) }
+    }
+
     func showAndFocusSearch() {
-        if window?.isVisible == false {
-            window?.center()
-        }
+        if window?.isVisible == false { window?.center() }
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(searchField)
@@ -46,6 +76,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         searchField.action = #selector(executeSearch(_:))
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
+        configureFilterControls()
+
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.translatesAutoresizingMaskIntoConstraints = false
@@ -55,7 +87,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         statusLabel.font = .systemFont(ofSize: 12)
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -65,29 +96,132 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         configureTable()
         scrollView.documentView = tableView
 
-        content.addSubview(searchField)
-        content.addSubview(scrollView)
-        content.addSubview(spinner)
-        content.addSubview(statusLabel)
+        let scopeLabel = filterLabel(String(localized: "Scope:"))
+        let categoryLabel = filterLabel(String(localized: "Type:"))
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let filterBar = NSStackView(views: [scopeLabel, scopePopup, categoryLabel, categoryPopup, spacer, prioritizeFoldersButton, foldersFirstButton, settingsButton])
+        filterBar.orientation = .horizontal
+        filterBar.alignment = .centerY
+        filterBar.spacing = 7
+        filterBar.translatesAutoresizingMaskIntoConstraints = false
+
+        let statusSpacer = NSView()
+        statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let statusBar = NSStackView(views: [spinner, statusLabel, statusSpacer, keepOnTopButton, allSpacesButton])
+        statusBar.orientation = .horizontal
+        statusBar.alignment = .centerY
+        statusBar.spacing = 8
+        statusBar.translatesAutoresizingMaskIntoConstraints = false
+
+        [searchField, filterBar, scrollView, statusBar].forEach(content.addSubview)
 
         NSLayoutConstraint.activate([
-            searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
-            searchField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            searchField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            searchField.heightAnchor.constraint(equalToConstant: 34),
+            searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: 7),
+            searchField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            searchField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            searchField.heightAnchor.constraint(equalToConstant: 32),
 
-            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 12),
+            filterBar.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 5),
+            filterBar.leadingAnchor.constraint(equalTo: searchField.leadingAnchor),
+            filterBar.trailingAnchor.constraint(equalTo: searchField.trailingAnchor),
+            filterBar.heightAnchor.constraint(equalToConstant: 27),
+
+            scrollView.topAnchor.constraint(equalTo: filterBar.bottomAnchor, constant: 5),
             scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -8),
+            scrollView.bottomAnchor.constraint(equalTo: statusBar.topAnchor, constant: -5),
 
-            spinner.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            spinner.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor),
-            statusLabel.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 8),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -16),
-            statusLabel.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -9)
+            statusBar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            statusBar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            statusBar.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -5),
+            statusBar.heightAnchor.constraint(equalToConstant: 24),
+
+            scopePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            scopePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 230),
+            categoryPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 105),
+            settingsButton.widthAnchor.constraint(equalToConstant: 30)
         ])
-        layoutColumnsToFit()
+
+        refreshFilterControls()
+        DispatchQueue.main.async { [weak self] in self?.fitColumnsToViewport() }
+    }
+
+    private func filterLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.textColor = .secondaryLabelColor
+        label.font = .systemFont(ofSize: 12)
+        return label
+    }
+
+    private func configureFilterControls() {
+        scopePopup.controlSize = .small
+        scopePopup.target = self
+        scopePopup.action = #selector(scopeChanged(_:))
+
+        categoryPopup.controlSize = .small
+        categoryPopup.target = self
+        categoryPopup.action = #selector(categoryChanged(_:))
+        for category in SearchCategory.allCases {
+            let item = NSMenuItem(title: category.title, action: nil, keyEquivalent: "")
+            item.representedObject = category.rawValue
+            categoryPopup.menu?.addItem(item)
+        }
+
+        prioritizeFoldersButton.controlSize = .small
+        prioritizeFoldersButton.target = self
+        prioritizeFoldersButton.action = #selector(prioritizeFoldersChanged(_:))
+
+        foldersFirstButton.controlSize = .small
+        foldersFirstButton.target = self
+        foldersFirstButton.action = #selector(foldersFirstChanged(_:))
+
+        keepOnTopButton.controlSize = .small
+        keepOnTopButton.target = self
+        keepOnTopButton.action = #selector(windowBehaviorChanged(_:))
+
+        allSpacesButton.controlSize = .small
+        allSpacesButton.target = self
+        allSpacesButton.action = #selector(windowBehaviorChanged(_:))
+
+        settingsButton.bezelStyle = .texturedRounded
+        settingsButton.controlSize = .small
+        settingsButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: String(localized: "Settings"))
+        settingsButton.toolTip = String(localized: "Settings")
+        settingsButton.target = self
+        settingsButton.action = #selector(openSettings(_:))
+    }
+
+    private func refreshFilterControls() {
+        scopePopup.removeAllItems()
+        let allItem = NSMenuItem(title: String(localized: "All Locations"), action: nil, keyEquivalent: "")
+        allItem.representedObject = ""
+        scopePopup.menu?.addItem(allItem)
+        for rule in SearchPreferences.folderRules {
+            let folderName = URL(fileURLWithPath: rule.path).lastPathComponent
+            let item = NSMenuItem(title: "\(folderName) — \(rule.priority.title)", action: nil, keyEquivalent: "")
+            item.toolTip = rule.path
+            item.representedObject = rule.path
+            scopePopup.menu?.addItem(item)
+        }
+        scopePopup.menu?.addItem(.separator())
+        let chooseItem = NSMenuItem(title: String(localized: "Choose Folder…"), action: nil, keyEquivalent: "")
+        chooseItem.representedObject = "__choose_folder__"
+        scopePopup.menu?.addItem(chooseItem)
+
+        let scopePath = SearchPreferences.scopePath ?? ""
+        if let item = scopePopup.itemArray.first(where: { ($0.representedObject as? String) == scopePath }) {
+            scopePopup.select(item)
+        } else {
+            scopePopup.select(allItem)
+        }
+        if let item = categoryPopup.itemArray.first(where: { ($0.representedObject as? String) == SearchPreferences.category.rawValue }) {
+            categoryPopup.select(item)
+        }
+        prioritizeFoldersButton.state = SearchPreferences.prioritizeFolderRules ? .on : .off
+        foldersFirstButton.state = SearchPreferences.foldersFirst ? .on : .off
+        synchronizeTableSortDescriptor()
     }
 
     private func configureTable() {
@@ -107,11 +241,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         tableView.onCopyPath = { [weak self] in self?.copyPath(nil) }
         tableView.onCopyFiles = { [weak self] in self?.copySelection(nil) }
 
-        addColumn("name", title: String(localized: "Name"), width: 260)
-        addColumn("path", title: String(localized: "Location"), width: 380)
-        addColumn("kind", title: String(localized: "Kind"), width: 140)
-        addColumn("size", title: String(localized: "Size"), width: 90)
-        addColumn("modified", title: String(localized: "Modified"), width: 150)
+        addColumn("name", title: String(localized: "Name"), width: 260, minimum: 140)
+        addColumn("path", title: String(localized: "Path"), width: 360, minimum: 190)
+        addColumn("kind", title: String(localized: "Kind"), width: 120, minimum: 85)
+        addColumn("size", title: String(localized: "Size"), width: 85, minimum: 70)
+        addColumn("modified", title: String(localized: "Modified"), width: 145, minimum: 115)
+        tableView.tableColumns.last?.resizingMask = []
+        restoreColumnWidths()
 
         let menu = NSMenu()
         let open = menu.addItem(withTitle: String(localized: "Open"), action: #selector(openSelection(_:)), keyEquivalent: "")
@@ -120,7 +256,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let quickLook = menu.addItem(withTitle: String(localized: "Quick Look"), action: #selector(toggleQuickLook(_:)), keyEquivalent: "")
         quickLook.identifier = NSUserInterfaceItemIdentifier("command.quickLook")
         quickLook.target = self
-        let reveal = menu.addItem(withTitle: String(localized: "Reveal in Finder"), action: #selector(revealSelection(_:)), keyEquivalent: "")
+        let reveal = menu.addItem(withTitle: String(localized: "Show in File Manager"), action: #selector(revealSelection(_:)), keyEquivalent: "")
         reveal.identifier = NSUserInterfaceItemIdentifier("command.reveal")
         reveal.target = self
         menu.addItem(.separator())
@@ -131,32 +267,91 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         refreshContextMenuShortcuts()
     }
 
-    private func addColumn(_ identifier: String, title: String, width: CGFloat) {
+    private func addColumn(_ identifier: String, title: String, width: CGFloat, minimum: CGFloat) {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(identifier))
         column.title = title
         column.width = width
-        column.minWidth = 70
+        column.minWidth = minimum
         column.resizingMask = .userResizingMask
         column.sortDescriptorPrototype = NSSortDescriptor(key: identifier, ascending: true)
         tableView.addTableColumn(column)
     }
 
-    private func layoutColumnsToFit() {
-        guard tableView.tableColumns.count == 5 else { return }
-        let availableWidth = max(window?.contentView?.bounds.width ?? 980, 680)
-        let kindWidth: CGFloat = 110
-        let sizeWidth: CGFloat = 80
-        let modifiedWidth: CGFloat = 135
-        let flexibleWidth = max(availableWidth - kindWidth - sizeWidth - modifiedWidth - 8, 355)
-        tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("name"))?.width = max(150, flexibleWidth * 0.38)
-        tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("path"))?.width = max(205, flexibleWidth * 0.62)
-        tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("kind"))?.width = kindWidth
-        tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("size"))?.width = sizeWidth
-        tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("modified"))?.width = modifiedWidth
+    private func fitColumnsToViewport() {
+        guard !isAdjustingColumns, !tableView.tableColumns.isEmpty else { return }
+        let availableWidth = max(scrollView.contentSize.width - 1, tableView.tableColumns.reduce(0) { $0 + $1.minWidth })
+        guard availableWidth > 0 else { return }
+        isAdjustingColumns = true
+        defer { isAdjustingColumns = false }
+
+        var difference = tableView.tableColumns.reduce(0) { $0 + $1.width } - availableWidth
+        if difference > 0.5 {
+            for column in tableView.tableColumns.reversed() {
+                let reduction = min(difference, column.width - column.minWidth)
+                column.width -= reduction
+                difference -= reduction
+                if difference <= 0.5 { break }
+            }
+        } else if difference < -0.5 {
+            let filler = tableView.tableColumns.first(where: { $0.identifier.rawValue == "path" })
+                ?? tableView.tableColumns.last
+            filler?.width += -difference
+        }
+
+        var frame = tableView.frame
+        frame.size.width = availableWidth
+        tableView.frame = frame
+        let visibleOrigin = scrollView.contentView.bounds.origin
+        if visibleOrigin.x != 0 {
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: visibleOrigin.y))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        snapshotColumnWidths()
+        saveColumnWidths()
+    }
+
+    private func snapshotColumnWidths() {
+        lastColumnWidths = Dictionary(uniqueKeysWithValues: tableView.tableColumns.map { ($0.identifier, $0.width) })
+    }
+
+    private func restoreColumnWidths() {
+        guard let widths = UserDefaults.standard.dictionary(forKey: "table.columnWidths") as? [String: Double] else { return }
+        for column in tableView.tableColumns {
+            if let width = widths[column.identifier.rawValue] { column.width = max(column.minWidth, width) }
+        }
+    }
+
+    private func saveColumnWidths() {
+        let widths = Dictionary(uniqueKeysWithValues: tableView.tableColumns.map { ($0.identifier.rawValue, Double($0.width)) })
+        UserDefaults.standard.set(widths, forKey: "table.columnWidths")
     }
 
     func windowDidResize(_ notification: Notification) {
-        layoutColumnsToFit()
+        fitColumnsToViewport()
+    }
+
+    func tableViewColumnDidResize(_ notification: Notification) {
+        guard !isAdjustingColumns,
+              let column = notification.userInfo?["NSTableColumn"] as? NSTableColumn,
+              let index = tableView.tableColumns.firstIndex(where: { $0 === column }),
+              index + 1 < tableView.tableColumns.count else {
+            if !isAdjustingColumns { snapshotColumnWidths() }
+            return
+        }
+
+        let neighbor = tableView.tableColumns[index + 1]
+        let previousColumnWidth = lastColumnWidths[column.identifier] ?? column.width
+        let previousNeighborWidth = lastColumnWidths[neighbor.identifier] ?? neighbor.width
+        let pairWidth = previousColumnWidth + previousNeighborWidth
+        let maximumColumnWidth = pairWidth - neighbor.minWidth
+        let adjustedColumnWidth = min(max(column.width, column.minWidth), maximumColumnWidth)
+
+        isAdjustingColumns = true
+        column.width = adjustedColumnWidth
+        neighbor.width = pairWidth - adjustedColumnWidth
+        isAdjustingColumns = false
+        snapshotColumnWidths()
+        saveColumnWidths()
     }
 
     func refreshContextMenuShortcuts() {
@@ -171,63 +366,212 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-        guard let descriptor = tableView.sortDescriptors.first,
-              let key = descriptor.key else { return }
-        let ascending = descriptor.ascending
-        results.sort { lhs, rhs in
-            let order: ComparisonResult
-            switch key {
-            case "name": order = lhs.displayName.localizedStandardCompare(rhs.displayName)
-            case "path": order = lhs.path.localizedStandardCompare(rhs.path)
-            case "kind": order = lhs.kind.localizedStandardCompare(rhs.kind)
-            case "size": order = Self.compare(lhs.size, rhs.size)
-            case "modified": order = Self.compare(lhs.modifiedAt, rhs.modifiedAt)
-            default: return false
+        guard !isSynchronizingSort, let descriptor = tableView.sortDescriptors.first, let key = descriptor.key else { return }
+        let mode: ResultSortMode
+        switch (key, descriptor.ascending) {
+        case ("name", true): mode = .nameAscending
+        case ("name", false): mode = .nameDescending
+        case ("path", true): mode = .pathAscending
+        case ("path", false): mode = .pathDescending
+        case ("kind", true): mode = .kindAscending
+        case ("kind", false): mode = .kindDescending
+        case ("size", true): mode = .sizeAscending
+        case ("size", false): mode = .sizeDescending
+        case ("modified", true): mode = .modifiedAscending
+        case ("modified", false): mode = .modifiedDescending
+        default: return
+        }
+        SearchPreferences.sortMode = mode
+    }
+
+    private func synchronizeTableSortDescriptor() {
+        let mode = SearchPreferences.sortMode
+        let descriptor: NSSortDescriptor?
+        switch mode {
+        case .nameAscending: descriptor = NSSortDescriptor(key: "name", ascending: true)
+        case .nameDescending: descriptor = NSSortDescriptor(key: "name", ascending: false)
+        case .pathAscending: descriptor = NSSortDescriptor(key: "path", ascending: true)
+        case .pathDescending: descriptor = NSSortDescriptor(key: "path", ascending: false)
+        case .kindAscending: descriptor = NSSortDescriptor(key: "kind", ascending: true)
+        case .kindDescending: descriptor = NSSortDescriptor(key: "kind", ascending: false)
+        case .sizeAscending: descriptor = NSSortDescriptor(key: "size", ascending: true)
+        case .sizeDescending: descriptor = NSSortDescriptor(key: "size", ascending: false)
+        case .modifiedAscending: descriptor = NSSortDescriptor(key: "modified", ascending: true)
+        case .modifiedDescending: descriptor = NSSortDescriptor(key: "modified", ascending: false)
+        }
+        isSynchronizingSort = true
+        tableView.sortDescriptors = descriptor.map { [$0] } ?? []
+        isSynchronizingSort = false
+    }
+
+    private func bindSearch() {
+        searchService.onUpdate = { [weak self] update in
+            guard let self else { return }
+            switch update {
+            case .idle:
+                self.candidates = []
+                self.applyRanking()
+                self.spinner.stopAnimation(nil)
+                self.statusLabel.stringValue = String(localized: "Type a query and press Return")
+            case .started:
+                self.spinner.startAnimation(nil)
+                self.statusLabel.stringValue = String(localized: "Starting Spotlight search…")
+            case let .gathering(count):
+                self.spinner.startAnimation(nil)
+                self.statusLabel.stringValue = String.localizedStringWithFormat(
+                    String(localized: "Searching… %lld results"),
+                    Int64(count)
+                )
+            case let .results(results):
+                self.candidates = results
+                self.applyRanking()
+                self.spinner.stopAnimation(nil)
+                self.statusLabel.stringValue = self.results.isEmpty
+                    ? String(localized: "No matching Spotlight results")
+                    : String.localizedStringWithFormat(String(localized: "%lld results"), Int64(self.results.count))
+                if !self.results.isEmpty && self.tableView.selectedRow < 0 {
+                    self.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+                }
+            case let .failed(failure):
+                self.candidates = []
+                self.applyRanking()
+                self.spinner.stopAnimation(nil)
+                switch failure {
+                case .couldNotStart:
+                    self.statusLabel.stringValue = String(localized: "Spotlight search could not start.")
+                case .timedOut:
+                    self.statusLabel.stringValue = String(localized: "Spotlight did not respond. Make sure Spotlight indexing is enabled.")
+                }
             }
-            if order == .orderedSame {
+        }
+    }
+
+    private func currentRequest() -> SearchRequest {
+        SearchRequest(text: searchField.stringValue, category: SearchPreferences.category, scopePath: SearchPreferences.scopePath)
+    }
+
+    private func performSearch() {
+        let request = currentRequest()
+        lastSearchRequest = request
+        searchService.search(request)
+    }
+
+    private func preferencesDidChange() {
+        refreshFilterControls()
+        let request = currentRequest()
+        if !request.text.isEmpty, request != lastSearchRequest {
+            searchService.cancel()
+            lastSearchRequest = nil
+            statusLabel.stringValue = String(localized: "Press Return to search")
+        } else {
+            applyRanking()
+        }
+    }
+
+    private func applyRanking() {
+        let sortMode = SearchPreferences.sortMode
+        let foldersFirst = SearchPreferences.foldersFirst
+        let prioritizeFolderRules = SearchPreferences.prioritizeFolderRules
+        let folderRules = SearchPreferences.folderRules
+        let rankings = candidates.reduce(into: [URL: (priority: Int, ruleOrder: Int)]()) { values, result in
+            values[result.url] = SearchPreferences.ranking(for: result.url, rules: folderRules)
+        }
+        results = candidates.sorted { lhs, rhs in
+            if prioritizeFolderRules {
+                let lhsRanking = rankings[lhs.url] ?? (priority: Int.max, ruleOrder: Int.max)
+                let rhsRanking = rankings[rhs.url] ?? (priority: Int.max, ruleOrder: Int.max)
+                if lhsRanking.priority != rhsRanking.priority { return lhsRanking.priority < rhsRanking.priority }
+            }
+            if foldersFirst, lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+            if prioritizeFolderRules {
+                let lhsRuleOrder = rankings[lhs.url]?.ruleOrder ?? Int.max
+                let rhsRuleOrder = rankings[rhs.url]?.ruleOrder ?? Int.max
+                if lhsRuleOrder != rhsRuleOrder { return lhsRuleOrder < rhsRuleOrder }
+            }
+
+            let comparison: ComparisonResult
+            switch sortMode {
+            case .nameAscending, .nameDescending:
+                comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
+            case .pathAscending, .pathDescending:
+                comparison = lhs.path.localizedStandardCompare(rhs.path)
+            case .kindAscending, .kindDescending:
+                comparison = lhs.kind.localizedStandardCompare(rhs.kind)
+            case .sizeAscending, .sizeDescending:
+                comparison = Self.compare(lhs.size, rhs.size)
+            case .modifiedAscending, .modifiedDescending:
+                comparison = Self.compare(lhs.modifiedAt, rhs.modifiedAt)
+            }
+            if comparison == .orderedSame {
                 return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
             }
-            return ascending ? order == .orderedAscending : order == .orderedDescending
+            switch sortMode {
+            case .nameDescending, .pathDescending, .kindDescending, .sizeDescending, .modifiedDescending:
+                return comparison == .orderedDescending
+            default:
+                return comparison == .orderedAscending
+            }
         }
         tableView.reloadData()
     }
 
-    private func bindSearch() {
-        searchService.onResultsChanged = { [weak self] results, searching in
-            guard let self else { return }
-            self.results = results
-            if self.tableView.sortDescriptors.isEmpty {
-                self.tableView.reloadData()
-            } else {
-                self.tableView(self.tableView, sortDescriptorsDidChange: [])
-            }
-            self.statusLabel.stringValue = searching
-                ? String(localized: "Searching… \(results.count) results")
-                : results.isEmpty && !self.searchField.stringValue.isEmpty
-                    ? String(localized: "No matching Spotlight-indexed files")
-                    : String(localized: "\(results.count) results")
-            searching ? self.spinner.startAnimation(nil) : self.spinner.stopAnimation(nil)
-            if !results.isEmpty && self.tableView.selectedRow < 0 {
-                self.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-            }
+    func controlTextDidChange(_ obj: Notification) {
+        searchService.cancel()
+        lastSearchRequest = nil
+        if !searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            statusLabel.stringValue = String(localized: "Press Return to search")
         }
     }
 
-    func controlTextDidChange(_ obj: Notification) {
-        searchService.cancel()
-        spinner.stopAnimation(nil)
-        statusLabel.stringValue = searchField.stringValue.isEmpty
-            ? String(localized: "Type a query and press Return")
-            : String(localized: "Press Return to search")
+    @objc private func executeSearch(_ sender: Any?) { performSearch() }
+
+    @objc private func categoryChanged(_ sender: NSPopUpButton) {
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+              let category = SearchCategory(rawValue: rawValue) else { return }
+        SearchPreferences.category = category
     }
 
-    @objc private func executeSearch(_ sender: Any?) {
-        searchService.search(text: searchField.stringValue)
+    @objc private func scopeChanged(_ sender: NSPopUpButton) {
+        guard let value = sender.selectedItem?.representedObject as? String else { return }
+        if value == "__choose_folder__" {
+            chooseSearchFolder()
+        } else {
+            SearchPreferences.scopePath = value.isEmpty ? nil : value
+        }
+    }
+
+    private func chooseSearchFolder() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = String(localized: "Choose")
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            guard response == .OK, let url = panel.url else {
+                self.refreshFilterControls()
+                return
+            }
+            SearchPreferences.addFolder(path: url.path)
+            SearchPreferences.scopePath = url.path
+        }
+    }
+
+    @objc private func prioritizeFoldersChanged(_ sender: NSButton) {
+        SearchPreferences.prioritizeFolderRules = sender.state == .on
+    }
+
+    @objc private func foldersFirstChanged(_ sender: NSButton) {
+        SearchPreferences.foldersFirst = sender.state == .on
+    }
+
+    @objc private func openSettings(_ sender: Any?) {
+        NSApp.sendAction(#selector(AppDelegate.showPreferences(_:)), to: NSApp.delegate, from: sender)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard !results.isEmpty else { return false }
-        guard commandSelector == #selector(NSResponder.moveDown(_:)) else { return false }
+        guard !results.isEmpty, commandSelector == #selector(NSResponder.moveDown(_:)) else { return false }
         if tableView.selectedRow < 0 {
             tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         }
@@ -256,6 +600,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         case "modified": cell.textField?.stringValue = result.modifiedAt.map(Self.dateFormatter.string(from:)) ?? "—"
         default: break
         }
+        cell.textField?.toolTip = cell.textField?.stringValue
         return cell
     }
 
@@ -289,7 +634,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     @objc func openSelection(_ sender: Any?) {
-        selectedURLs.forEach { NSWorkspace.shared.open($0) }
+        let selectedResults = tableView.selectedRowIndexes.compactMap { $0 < results.count ? results[$0] : nil }
+        let folders = selectedResults.filter(\.isDirectory).map(\.url)
+        if !folders.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(folders) }
+        selectedResults.filter { !$0.isDirectory }.forEach { NSWorkspace.shared.open($0.url) }
     }
 
     @objc func revealSelection(_ sender: Any?) {
@@ -358,6 +706,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         case (_, nil): return .orderedDescending
         }
     }
+
+    private func restoreWindowBehavior() {
+        keepOnTopButton.state = UserDefaults.standard.bool(forKey: WindowPreferenceKey.keepOnTop) ? .on : .off
+        allSpacesButton.state = UserDefaults.standard.bool(forKey: WindowPreferenceKey.showOnAllSpaces) ? .on : .off
+        applyWindowBehavior()
+    }
+
+    @objc private func windowBehaviorChanged(_ sender: NSButton) {
+        UserDefaults.standard.set(keepOnTopButton.state == .on, forKey: WindowPreferenceKey.keepOnTop)
+        UserDefaults.standard.set(allSpacesButton.state == .on, forKey: WindowPreferenceKey.showOnAllSpaces)
+        applyWindowBehavior()
+    }
+
+    private func applyWindowBehavior() {
+        guard let window else { return }
+        window.level = keepOnTopButton.state == .on ? .floating : .normal
+        var behavior = window.collectionBehavior
+        behavior.remove([.canJoinAllSpaces, .fullScreenAuxiliary])
+        if allSpacesButton.state == .on {
+            behavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
+        }
+        window.collectionBehavior = behavior
+    }
 }
 
 private final class ActionTableView: NSTableView {
@@ -381,7 +752,5 @@ private final class ActionTableView: NSTableView {
         }
     }
 
-    @objc func copy(_ sender: Any?) {
-        onCopyFiles?()
-    }
+    @objc func copy(_ sender: Any?) { onCopyFiles?() }
 }

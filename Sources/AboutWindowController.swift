@@ -26,18 +26,21 @@ final class AboutWindowController: NSWindowController {
         icon.setAccessibilityLabel(String(localized: "FindAll application icon"))
 
         let name = label("FindAll", size: 26, weight: .bold)
-        let standardVersion = label("Version \(version) (Build \(build))", size: 13)
+        let standardVersion = label(
+            String.localizedStringWithFormat(String(localized: "Version %@ (Build %@)"), version, build),
+            size: 13
+        )
         let description = label(String(localized: "A native, keyboard-friendly file search interface for macOS."), size: 13)
         let spotlight = label(String(localized: "Search results are provided using macOS Spotlight metadata."), size: 12, color: .secondaryLabelColor)
 
         var views: [NSView] = [icon, name, standardVersion]
 #if DEBUG
         views.append(contentsOf: [
-            label("Version: v\(version)", size: 12),
-            label("Build: \(build)", size: 12),
-            label("Commit: \(info["FindAllGitCommit"] as? String ?? "unknown")", size: 12),
-            label("Status: \(info["FindAllGitStatus"] as? String ?? "unknown")", size: 12),
-            label("Build Time: \(info["FindAllBuildTime"] as? String ?? "unknown")", size: 12)
+            label(String.localizedStringWithFormat(String(localized: "Version: v%@"), version), size: 12),
+            label(String.localizedStringWithFormat(String(localized: "Build: %@"), build), size: 12),
+            label(String.localizedStringWithFormat(String(localized: "Commit: %@"), info["FindAllGitCommit"] as? String ?? "unknown"), size: 12),
+            label(String.localizedStringWithFormat(String(localized: "Status: %@"), info["FindAllGitStatus"] as? String ?? "unknown"), size: 12),
+            label(String.localizedStringWithFormat(String(localized: "Build Time: %@"), info["FindAllBuildTime"] as? String ?? "unknown"), size: 12)
         ])
 #endif
         views.append(contentsOf: [description, spotlight, label("© 2026 FindAll", size: 12, color: .secondaryLabelColor)])
