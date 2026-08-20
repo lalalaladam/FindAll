@@ -242,12 +242,54 @@ enum SearchPreferences {
 }
 
 enum FullDiskAccessSupport {
+    enum Status {
+        case granted
+        case denied
+        case unknown
+    }
+
+    static func currentStatus() -> Status {
+        let fileManager = FileManager.default
+        let library = fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library", isDirectory: true)
+        let protectedFolders = [
+            library.appendingPathComponent("Mail", isDirectory: true),
+            library.appendingPathComponent("Messages", isDirectory: true),
+            library.appendingPathComponent("Safari", isDirectory: true)
+        ]
+
+        for folder in protectedFolders {
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+            do {
+                _ = try fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+                return .granted
+            } catch {
+                if isPermissionDenied(error) { return .denied }
+            }
+        }
+        return .unknown
+    }
+
     static func openSystemSettings() {
         let workspace = NSWorkspace.shared
+        if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"),
+           workspace.open(url) {
+            return
+        }
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
            workspace.open(url) {
             return
         }
         workspace.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    }
+
+    private static func isPermissionDenied(_ error: Error) -> Bool {
+        let error = error as NSError
+        if error.domain == NSCocoaErrorDomain,
+           error.code == CocoaError.fileReadNoPermission.rawValue {
+            return true
+        }
+        return error.domain == NSPOSIXErrorDomain
+            && [Int(POSIXErrorCode.EACCES.rawValue), Int(POSIXErrorCode.EPERM.rawValue)].contains(error.code)
     }
 }

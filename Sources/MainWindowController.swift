@@ -3,14 +3,14 @@ import QuickLookUI
 
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
     private let searchField = NSSearchField()
-    private let scopePopup = NSPopUpButton()
-    private let categoryPopup = NSPopUpButton()
+    private let scopePopup = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let categoryPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let prioritizeFoldersButton = NSButton(checkboxWithTitle: String(localized: "Prioritize folder rules"), target: nil, action: nil)
     private let foldersFirstButton = NSButton(checkboxWithTitle: String(localized: "Folders first"), target: nil, action: nil)
     private let settingsButton = NSButton()
     private let scrollView = NSScrollView()
     private let tableView = ActionTableView()
-    private let statusLabel = NSTextField(labelWithString: String(localized: "Type a query and press Return"))
+    private let statusLabel = WindowDragTextField(labelWithString: String(localized: "Type a query and press Return"))
     private let spinner = NSProgressIndicator()
     private let keepOnTopButton = NSButton(checkboxWithTitle: String(localized: "Keep on top in current Space"), target: nil, action: nil)
     private let allSpacesButton = NSButton(checkboxWithTitle: String(localized: "Show on all Spaces"), target: nil, action: nil)
@@ -22,6 +22,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var sharingServicePicker: NSSharingServicePicker?
     private var isAdjustingColumns = false
     private var isSynchronizingSort = false
+    private var isFilterRefreshScheduled = false
 
     private static let columnWidthsPreferenceKey = "table.columnWidths.v3"
     private static let fullDiskAccessNoticeKey = "privacy.fullDiskAccessNoticeShown.v1"
@@ -95,7 +96,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
-        scrollView.horizontalScrollElasticity = .automatic
+        scrollView.autohidesScrollers = true
+        scrollView.horizontalScrollElasticity = .none
         scrollView.borderType = .noBorder
 
         configureTable()
@@ -114,7 +116,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let statusSpacer = WindowDragView()
         statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let statusBar = NSStackView(views: [spinner, statusLabel, statusSpacer, keepOnTopButton, allSpacesButton])
+        let statusBar = WindowDragStackView(views: [spinner, statusLabel, statusSpacer, keepOnTopButton, allSpacesButton])
         statusBar.orientation = .horizontal
         statusBar.alignment = .centerY
         statusBar.spacing = 8
@@ -134,8 +136,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             filterBar.heightAnchor.constraint(equalToConstant: 27),
 
             scrollView.topAnchor.constraint(equalTo: filterBar.bottomAnchor, constant: 5),
-            scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: statusBar.topAnchor, constant: -5),
 
             statusBar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
@@ -143,9 +145,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             statusBar.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -5),
             statusBar.heightAnchor.constraint(equalToConstant: 24),
 
-            scopePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
-            scopePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 230),
-            categoryPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 105),
+            scopePopup.widthAnchor.constraint(equalToConstant: 205),
+            categoryPopup.widthAnchor.constraint(equalToConstant: 115),
             settingsButton.widthAnchor.constraint(equalToConstant: 30)
         ])
 
@@ -162,17 +163,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     private func configureFilterControls() {
         scopePopup.controlSize = .small
-        scopePopup.target = self
-        scopePopup.action = #selector(scopeChanged(_:))
+        scopePopup.preferredEdge = .minY
 
         categoryPopup.controlSize = .small
-        categoryPopup.target = self
-        categoryPopup.action = #selector(categoryChanged(_:))
-        for category in SearchCategory.allCases {
-            let item = NSMenuItem(title: category.title, action: nil, keyEquivalent: "")
-            item.representedObject = category.rawValue
-            categoryPopup.menu?.addItem(item)
-        }
+        categoryPopup.preferredEdge = .minY
+        rebuildCategoryMenu()
 
         prioritizeFoldersButton.controlSize = .small
         prioritizeFoldersButton.target = self
@@ -198,58 +193,81 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         settingsButton.action = #selector(openSettings(_:))
     }
 
+    private func rebuildCategoryMenu() {
+        categoryPopup.removeAllItems()
+        let selectedCategory = SearchPreferences.category
+        categoryPopup.addItem(withTitle: selectedCategory.title)
+        categoryPopup.item(at: 0)?.toolTip = selectedCategory.title
+        for category in SearchCategory.allCases {
+            let item = NSMenuItem(title: category.title, action: #selector(categoryMenuItemSelected(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = category.rawValue
+            item.state = category == selectedCategory ? .on : .off
+            categoryPopup.menu?.addItem(item)
+        }
+        categoryPopup.toolTip = selectedCategory.title
+    }
+
     private func refreshFilterControls() {
         scopePopup.removeAllItems()
-        let allItem = NSMenuItem(title: String(localized: "All Locations"), action: nil, keyEquivalent: "")
-        allItem.representedObject = ""
-        scopePopup.menu?.addItem(allItem)
-
         let rules = SearchPreferences.folderRules
         let savedPaths = rules.map(\.path)
-        let scopePath = SearchPreferences.scopePath
-        if let scopePath, !savedPaths.contains(scopePath) {
+        let selectedScope = SearchPreferences.scopePath
+        let selectedTitle = selectedScope.map { scopeTitle(for: $0, among: savedPaths + [$0]) }
+            ?? String(localized: "All Locations")
+        scopePopup.addItem(withTitle: selectedTitle)
+        scopePopup.item(at: 0)?.toolTip = selectedScope ?? String(localized: "All Locations")
+
+        let allItem = NSMenuItem(title: String(localized: "All Locations"), action: #selector(scopeMenuItemSelected(_:)), keyEquivalent: "")
+        allItem.target = self
+        allItem.representedObject = ""
+        allItem.state = selectedScope == nil ? .on : .off
+        scopePopup.menu?.addItem(allItem)
+
+        if let selectedScope, !savedPaths.contains(selectedScope) {
             scopePopup.menu?.addItem(.separator())
             let heading = NSMenuItem(title: String(localized: "Temporary Scope"), action: nil, keyEquivalent: "")
             heading.isEnabled = false
             scopePopup.menu?.addItem(heading)
-            let item = NSMenuItem(title: scopeTitle(for: scopePath, among: savedPaths + [scopePath]), action: nil, keyEquivalent: "")
-            item.toolTip = scopePath
-            item.representedObject = scopePath
+            let item = NSMenuItem(title: scopeTitle(for: selectedScope, among: savedPaths + [selectedScope]), action: #selector(scopeMenuItemSelected(_:)), keyEquivalent: "")
+            item.target = self
+            item.toolTip = selectedScope
+            item.representedObject = selectedScope
+            item.state = .on
             scopePopup.menu?.addItem(item)
         }
 
         if !rules.isEmpty {
             scopePopup.menu?.addItem(.separator())
-            let heading = NSMenuItem(title: String(localized: "Saved Folders"), action: nil, keyEquivalent: "")
-            heading.isEnabled = false
-            scopePopup.menu?.addItem(heading)
-        }
-        for rule in rules {
-            let item = NSMenuItem(title: scopeTitle(for: rule.path, among: savedPaths), action: nil, keyEquivalent: "")
-            item.toolTip = rule.path
-            item.representedObject = rule.path
-            scopePopup.menu?.addItem(item)
+            let savedFoldersItem = NSMenuItem(title: String(localized: "Saved Folders"), action: nil, keyEquivalent: "")
+            let savedFoldersMenu = NSMenu(title: String(localized: "Saved Folders"))
+            for rule in rules {
+                let item = NSMenuItem(title: scopeTitle(for: rule.path, among: savedPaths), action: #selector(scopeMenuItemSelected(_:)), keyEquivalent: "")
+                item.target = self
+                item.toolTip = rule.path
+                item.representedObject = rule.path
+                item.state = rule.path == selectedScope ? .on : .off
+                savedFoldersMenu.addItem(item)
+            }
+            savedFoldersItem.submenu = savedFoldersMenu
+            scopePopup.menu?.addItem(savedFoldersItem)
         }
         scopePopup.menu?.addItem(.separator())
-        let chooseItem = NSMenuItem(title: String(localized: "Choose Temporary Folder…"), action: nil, keyEquivalent: "")
+        let chooseItem = NSMenuItem(title: String(localized: "Choose Temporary Folder…"), action: #selector(scopeCommandSelected(_:)), keyEquivalent: "")
+        chooseItem.target = self
         chooseItem.representedObject = "__choose_folder__"
         scopePopup.menu?.addItem(chooseItem)
-        let addItem = NSMenuItem(title: String(localized: "Add Saved Folder…"), action: nil, keyEquivalent: "")
+        let addItem = NSMenuItem(title: String(localized: "Add Saved Folder…"), action: #selector(scopeCommandSelected(_:)), keyEquivalent: "")
+        addItem.target = self
         addItem.representedObject = "__add_saved_folder__"
         scopePopup.menu?.addItem(addItem)
-        let manageItem = NSMenuItem(title: String(localized: "Manage Saved Folders…"), action: nil, keyEquivalent: "")
+        let manageItem = NSMenuItem(title: String(localized: "Manage Saved Folders…"), action: #selector(scopeCommandSelected(_:)), keyEquivalent: "")
+        manageItem.target = self
         manageItem.representedObject = "__manage_folders__"
         scopePopup.menu?.addItem(manageItem)
 
-        let selectedScope = scopePath ?? ""
-        if let item = scopePopup.itemArray.first(where: { ($0.representedObject as? String) == selectedScope }) {
-            scopePopup.select(item)
-        } else {
-            scopePopup.select(allItem)
-        }
-        if let item = categoryPopup.itemArray.first(where: { ($0.representedObject as? String) == SearchPreferences.category.rawValue }) {
-            categoryPopup.select(item)
-        }
+        scopePopup.toolTip = selectedScope ?? String(localized: "All Locations")
+        rebuildCategoryMenu()
         prioritizeFoldersButton.state = SearchPreferences.prioritizeFolderRules ? .on : .off
         foldersFirstButton.state = SearchPreferences.foldersFirst ? .on : .off
         synchronizeTableSortDescriptor()
@@ -541,13 +559,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func preferencesDidChange() {
-        refreshFilterControls()
+        scheduleFilterControlsRefresh()
         let request = currentRequest()
         if !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            request != lastSearchRequest {
             performSearch()
         } else {
             applyRanking()
+        }
+    }
+
+    private func scheduleFilterControlsRefresh() {
+        guard !isFilterRefreshScheduled else { return }
+        isFilterRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isFilterRefreshScheduled = false
+            self.refreshFilterControls()
         }
     }
 
@@ -608,23 +636,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     @objc private func executeSearch(_ sender: Any?) { performSearch() }
 
-    @objc private func categoryChanged(_ sender: NSPopUpButton) {
-        guard let rawValue = sender.selectedItem?.representedObject as? String,
+    @objc private func categoryMenuItemSelected(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
               let category = SearchCategory(rawValue: rawValue) else { return }
         SearchPreferences.category = category
     }
 
-    @objc private func scopeChanged(_ sender: NSPopUpButton) {
-        guard let value = sender.selectedItem?.representedObject as? String else { return }
+    @objc private func scopeMenuItemSelected(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String else { return }
+        SearchPreferences.scopePath = value.isEmpty ? nil : value
+    }
+
+    @objc private func scopeCommandSelected(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String else { return }
         if value == "__choose_folder__" {
             chooseSearchFolder()
         } else if value == "__add_saved_folder__" {
             addSavedSearchFolders()
         } else if value == "__manage_folders__" {
             openSettings(sender)
-            refreshFilterControls()
-        } else {
-            SearchPreferences.scopePath = value.isEmpty ? nil : value
         }
     }
 
@@ -866,7 +896,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func showFullDiskAccessNoticeIfNeeded() {
-        guard !UserDefaults.standard.bool(forKey: Self.fullDiskAccessNoticeKey), let window else { return }
+        guard FullDiskAccessSupport.currentStatus() != .granted,
+              !UserDefaults.standard.bool(forKey: Self.fullDiskAccessNoticeKey),
+              let window else { return }
         UserDefaults.standard.set(true, forKey: Self.fullDiskAccessNoticeKey)
         DispatchQueue.main.async { [weak self, weak window] in
             guard self != nil, let window else { return }
@@ -910,6 +942,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
 private final class WindowDragView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
+private final class WindowDragTextField: NSTextField {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
+private final class WindowDragStackView: NSStackView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
 }
 
 private final class ActionTableView: NSTableView {

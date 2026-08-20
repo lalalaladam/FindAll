@@ -40,6 +40,9 @@
 "Folders" = "文件夹";
 "Folders first" = "文件夹置顶";
 "Full Disk Access" = "完全磁盘访问";
+"Full Disk Access could not be confirmed." = "无法确认完全磁盘访问状态。";
+"Full Disk Access is available." = "已获得完全磁盘访问权限。";
+"Full Disk Access is not available." = "尚未获得完全磁盘访问权限。";
 "Full Disk Access Required" = "需要完全磁盘访问";
 "Full Disk Access is required for Spotlight searches. Without it, searches return no results. Enable FindAll in System Settings, then restart the app." = "Spotlight 搜索需要完全磁盘访问权限；未授权时搜索会返回空结果。请在系统设置中启用 FindAll，然后重新启动应用。";
 "FindAll needs Full Disk Access for Spotlight searches. Without it, searches return no results. Add FindAll in System Settings, enable it, then restart the app." = "FindAll 需要完全磁盘访问权限才能进行 Spotlight 搜索；未授权时搜索会返回空结果。请在系统设置中添加并启用 FindAll，然后重新启动应用。";
@@ -58,6 +61,7 @@
 "Modified (Oldest First)" = "修改时间（最早优先）";
 "Modified" = "修改时间";
 "Manage Saved Folders…" = "管理常用文件夹…";
+"Manage Full Disk Access…" = "管理完全磁盘访问…";
 "Move Down" = "下移";
 "Move Up" = "上移";
 "Name (A–Z)" = "名称（A–Z）";

@@ -241,6 +241,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private let shortcutMessageLabel = NSTextField(labelWithString: "")
     private let prioritizeFolderRulesButton = NSButton(checkboxWithTitle: String(localized: "Prioritize folder rules"), target: nil, action: nil)
     private let foldersFirstButton = NSButton(checkboxWithTitle: String(localized: "Keep folders above files within the same priority"), target: nil, action: nil)
+    private let fullDiskAccessStatusLabel = NSTextField(labelWithString: "")
+    private lazy var openFullDiskAccessSettingsButton = NSButton(
+        title: String(localized: "Open Full Disk Access Settings"),
+        target: self,
+        action: #selector(openFullDiskAccessSettings(_:))
+    )
     private let rulesTableView = NSTableView()
     private var folderRules: [FolderRule] = []
 
@@ -292,11 +298,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         accessHeading.font = .boldSystemFont(ofSize: 14)
         let accessHelp = NSTextField(wrappingLabelWithString: String(localized: "Full Disk Access is required for Spotlight searches. Without it, searches return no results. Enable FindAll in System Settings, then restart the app."))
         accessHelp.textColor = .secondaryLabelColor
-        let openAccessSettings = NSButton(
-            title: String(localized: "Open Full Disk Access Settings"),
-            target: self,
-            action: #selector(openFullDiskAccessSettings(_:))
-        )
+        fullDiskAccessStatusLabel.font = .systemFont(ofSize: 12, weight: .medium)
 
         let heading = NSTextField(labelWithString: String(localized: "Result Ordering"))
         heading.font = .boldSystemFont(ofSize: 17)
@@ -327,7 +329,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        [accessHeading, accessHelp, openAccessSettings, heading, help, prioritizeFolderRulesButton, foldersFirstButton, folderHeading, folderHelp, scrollView, buttons].forEach {
+        [accessHeading, accessHelp, fullDiskAccessStatusLabel, openFullDiskAccessSettingsButton, heading, help, prioritizeFolderRulesButton, foldersFirstButton, folderHeading, folderHelp, scrollView, buttons].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
@@ -337,9 +339,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             accessHelp.topAnchor.constraint(equalTo: accessHeading.bottomAnchor, constant: 6),
             accessHelp.leadingAnchor.constraint(equalTo: accessHeading.leadingAnchor),
             accessHelp.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            openAccessSettings.topAnchor.constraint(equalTo: accessHelp.bottomAnchor, constant: 8),
-            openAccessSettings.leadingAnchor.constraint(equalTo: accessHeading.leadingAnchor),
-            heading.topAnchor.constraint(equalTo: openAccessSettings.bottomAnchor, constant: 18),
+            fullDiskAccessStatusLabel.topAnchor.constraint(equalTo: accessHelp.bottomAnchor, constant: 8),
+            fullDiskAccessStatusLabel.leadingAnchor.constraint(equalTo: accessHeading.leadingAnchor),
+            openFullDiskAccessSettingsButton.topAnchor.constraint(equalTo: fullDiskAccessStatusLabel.bottomAnchor, constant: 8),
+            openFullDiskAccessSettingsButton.leadingAnchor.constraint(equalTo: accessHeading.leadingAnchor),
+            heading.topAnchor.constraint(equalTo: openFullDiskAccessSettingsButton.bottomAnchor, constant: 18),
             heading.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
             help.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
             help.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
@@ -450,18 +454,19 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         guard tableView === rulesTableView, let tableColumn, folderRules.indices.contains(row) else { return nil }
         let rule = folderRules[row]
         if tableColumn.identifier.rawValue == "priority" {
-            let popup = NSPopUpButton()
+            let popup = NSPopUpButton(frame: .zero, pullsDown: true)
             popup.identifier = tableColumn.identifier
             popup.controlSize = .small
-            popup.tag = row
-            popup.target = self
-            popup.action = #selector(folderPriorityChanged(_:))
+            popup.preferredEdge = .minY
+            popup.addItem(withTitle: rule.priority.title)
             for priority in FolderPriority.allCases {
-                let item = NSMenuItem(title: priority.title, action: nil, keyEquivalent: "")
+                let item = NSMenuItem(title: priority.title, action: #selector(folderPriorityMenuItemSelected(_:)), keyEquivalent: "")
+                item.target = self
                 item.tag = priority.rawValue
+                item.representedObject = row
+                item.state = priority == rule.priority ? .on : .off
                 popup.menu?.addItem(item)
             }
-            popup.selectItem(withTag: rule.priority.rawValue)
             return popup
         }
         let identifier = tableColumn.identifier
@@ -488,7 +493,25 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         folderRules = SearchPreferences.folderRules
         prioritizeFolderRulesButton.state = SearchPreferences.prioritizeFolderRules ? .on : .off
         foldersFirstButton.state = SearchPreferences.foldersFirst ? .on : .off
+        refreshFullDiskAccessStatus()
         rulesTableView.reloadData()
+    }
+
+    private func refreshFullDiskAccessStatus() {
+        switch FullDiskAccessSupport.currentStatus() {
+        case .granted:
+            fullDiskAccessStatusLabel.stringValue = String(localized: "Full Disk Access is available.")
+            fullDiskAccessStatusLabel.textColor = .systemGreen
+            openFullDiskAccessSettingsButton.title = String(localized: "Manage Full Disk Access…")
+        case .denied:
+            fullDiskAccessStatusLabel.stringValue = String(localized: "Full Disk Access is not available.")
+            fullDiskAccessStatusLabel.textColor = .systemOrange
+            openFullDiskAccessSettingsButton.title = String(localized: "Open Full Disk Access Settings")
+        case .unknown:
+            fullDiskAccessStatusLabel.stringValue = String(localized: "Full Disk Access could not be confirmed.")
+            fullDiskAccessStatusLabel.textColor = .secondaryLabelColor
+            openFullDiskAccessSettingsButton.title = String(localized: "Open Full Disk Access Settings")
+        }
     }
 
     @objc private func prioritizeFolderRulesChanged(_ sender: NSButton) {
@@ -540,11 +563,23 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         persistFolderRules(selecting: row + 1)
     }
 
-    @objc private func folderPriorityChanged(_ sender: NSPopUpButton) {
-        guard folderRules.indices.contains(sender.tag),
-              let priority = FolderPriority(rawValue: sender.selectedTag()) else { return }
-        folderRules[sender.tag].priority = priority
-        persistFolderRules(selecting: sender.tag)
+    @objc private func folderPriorityMenuItemSelected(_ sender: NSMenuItem) {
+        guard let row = sender.representedObject as? Int,
+              folderRules.indices.contains(row),
+              let priority = FolderPriority(rawValue: sender.tag) else { return }
+        folderRules[row].priority = priority
+        SearchPreferences.folderRules = folderRules
+
+        let priorityColumn = rulesTableView.column(withIdentifier: NSUserInterfaceItemIdentifier("priority"))
+        if priorityColumn >= 0,
+           let popup = rulesTableView.view(atColumn: priorityColumn, row: row, makeIfNecessary: false) as? NSPopUpButton {
+            popup.item(at: 0)?.title = priority.title
+            for item in popup.itemArray.dropFirst() {
+                item.state = item.tag == priority.rawValue ? .on : .off
+            }
+            popup.synchronizeTitleAndSelectedItem()
+        }
+        rulesTableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     }
 
     private func persistFolderRules(selecting row: Int? = nil) {
