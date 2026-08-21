@@ -55,6 +55,7 @@
 "File" = "文件";
 "Text" = "文本";
 "Property List" = "属性列表";
+"Project page: %@" = "项目主页：%@";
 "Disk Image" = "磁盘映像";
 "FindAll Settings" = "FindAll 设置";
 "FindAll application icon" = "FindAll 应用图标";

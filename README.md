@@ -6,35 +6,27 @@
 
 ### 简介
 
-FindAll 是一款原生 macOS 文件搜索工具，当前版本使用 macOS Spotlight 元数据查找
-文件、文件夹和应用，并提供结果筛选、排序和快捷操作。
+FindAll 是一款原生 macOS 文件搜索工具，使用 Spotlight 元数据快速查找文件、文件夹和应用程序。应用采用 Swift 与 AppKit 构建，支持简体中文和英文界面。
+
+### 主要功能
+
+- 按名称搜索，支持“包含”“开头匹配”和“完全匹配”三种模式。
+- 按文件夹、应用程序、视频、音频、图像、文档、PPT、Word、Excel、PDF 和压缩包筛选结果。
+- 支持智能排序及按名称、路径、类型、大小和修改日期排序。
+- 可设置文件夹优先级、文件夹置顶和自定义搜索范围。
+- 以简洁且本地化的名称显示常见文件类型；文本被截断时可通过提示查看完整内容。
+- 支持快速查看、打开、选择打开方式、在文件管理器中显示、复制文件、复制完整路径、共享和查看简介。
+- 打开多个所选项目时会先请求确认，避免意外同时打开大量窗口或应用。
+- 支持自定义全局呼出快捷键和结果列表操作快捷键。
+- 可配置窗口位置、窗口大小、置顶、跨空间显示、结果列布局及首选文件管理器。
 
 ### 系统要求
 
-初始目标环境：
-
 - Apple Silicon Mac（arm64）
 - macOS 14 或更高版本
+- Spotlight 已启用；可在系统设置中授予“完全磁盘访问权限”，以搜索更多位置
 
-在首个正式版本发布前，系统版本和架构要求仍可能根据实现与测试结果调整。
-
-### 从源码构建
-
-项目使用 Swift、AppKit、Foundation、Quick Look、`NSWorkspace` 和 Spotlight
-元数据 API 构建。
-
-工程标识：
-
-- Project：`FindAll.xcodeproj`
-- Scheme：`FindAll`
-- Product：`FindAll.app`
-- Bundle Identifier：`com.lalalaladam.FindAll`
-
-数值构建号必须使用当前 Git commit 数量：
-
-```bash
-git rev-list --count HEAD
-```
+> 本项目仍在开发中，功能和兼容性可能继续调整。
 
 ---
 
@@ -42,34 +34,24 @@ git rev-list --count HEAD
 
 ### Overview
 
-FindAll is a native macOS file-search utility. The current version uses macOS
-Spotlight metadata to find files, folders, and applications and provides result
-filtering, ordering, and keyboard-friendly actions.
+FindAll is a native macOS file-search utility that uses Spotlight metadata to quickly find files, folders, and applications. It is built with Swift and AppKit and provides interfaces in Simplified Chinese and English.
+
+### Features
+
+- Search by name with Contains, Starts With, and Exact matching modes.
+- Filter results by folders, applications, videos, audio, images, documents, PPT, Word, Excel, PDF, and archives.
+- Use smart ordering or sort by name, path, kind, size, and modification date.
+- Configure folder priorities, folders-first ordering, and custom search scopes.
+- Display common file kinds with concise, localized names; reveal complete text in a tooltip when a value is truncated.
+- Quick Look, open, open with another application, show in a file manager, copy files, copy full paths, share, and get information.
+- Confirm before opening multiple selected items to avoid unintentionally opening many windows or applications.
+- Customize the global show/hide shortcut and result-list action shortcuts.
+- Configure window placement and size, always-on-top and all-Spaces behavior, result-column layout, and the preferred file manager.
 
 ### Requirements
 
-Initial deployment target:
-
 - Apple Silicon Mac (arm64)
 - macOS 14 or later
+- Spotlight enabled; Full Disk Access can be granted in System Settings to search additional locations
 
-The supported macOS version and architectures may be revised before the first
-stable release based on implementation and testing.
-
-### Building from Source
-
-The project uses Swift, AppKit, Foundation, Quick Look, `NSWorkspace`, and
-Spotlight metadata APIs.
-
-Project identifiers:
-
-- Project: `FindAll.xcodeproj`
-- Scheme: `FindAll`
-- Product: `FindAll.app`
-- Bundle Identifier: `com.lalalaladam.FindAll`
-
-The numeric build number must equal the current Git commit count:
-
-```bash
-git rev-list --count HEAD
-```
+> This project is under active development. Features and compatibility may change.

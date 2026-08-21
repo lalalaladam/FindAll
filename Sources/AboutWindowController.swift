@@ -2,8 +2,13 @@ import AppKit
 
 final class AboutWindowController: NSWindowController {
     init() {
+#if DEBUG
+        let contentHeight: CGFloat = 500
+#else
+        let contentHeight: CGFloat = 360
+#endif
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 500),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: contentHeight),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -43,7 +48,7 @@ final class AboutWindowController: NSWindowController {
             label(String.localizedStringWithFormat(L10n.string("Build Time: %@"), info["FindAllBuildTime"] as? String ?? "unknown"), size: 12)
         ])
 #endif
-        views.append(contentsOf: [description, spotlight, label("© 2026 FindAll", size: 12, color: .secondaryLabelColor)])
+        views.append(contentsOf: [description, spotlight, projectLinkButton()])
 
         let stack = NSStackView(views: views)
         stack.orientation = .vertical
@@ -70,5 +75,26 @@ final class AboutWindowController: NSWindowController {
         field.alignment = .center
         field.maximumNumberOfLines = 3
         return field
+    }
+
+    private func projectLinkButton() -> NSButton {
+        let button = NSButton(
+            title: String.localizedStringWithFormat(
+                L10n.string("Project page: %@"),
+                "github.com/lalalaladam/FindAll"
+            ),
+            target: self,
+            action: #selector(openProjectPage(_:))
+        )
+        button.isBordered = false
+        button.font = .systemFont(ofSize: 12)
+        button.contentTintColor = .linkColor
+        button.setAccessibilityLabel("FindAll GitHub")
+        return button
+    }
+
+    @objc private func openProjectPage(_ sender: Any?) {
+        guard let url = URL(string: "https://github.com/lalalaladam/FindAll") else { return }
+        NSWorkspace.shared.open(url)
     }
 }
