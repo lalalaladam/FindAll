@@ -10,6 +10,7 @@
 "All shortcuts restored." = "所有快捷键已恢复。";
 "All" = "全部";
 "Applications" = "应用程序";
+"Application" = "应用";
 "Archives" = "压缩包";
 "Audio" = "音频";
 "Contains" = "包含";
@@ -52,6 +53,9 @@
 "Smart ordering puts common documents first. Clicking a result-table header switches to strict column ordering. Folder priority and folders-first remain independent." = "智能排序会将常用文档提前；点击结果表头后切换为严格的列排序。目录优先级和文件夹置顶仍作为独立选项。";
 "This is the default ordering used when each search first appears. Clicking a result-table header changes only the current results; the next search returns to this default. Folder priority and folders-first remain independent." = "这里设置每次搜索首次显示时采用的默认排序。点击结果表头只会改变当前结果；下次搜索会恢复此默认排序。目录优先级和文件夹置顶仍作为独立选项。";
 "File" = "文件";
+"Text" = "文本";
+"Property List" = "属性列表";
+"Disk Image" = "磁盘映像";
 "FindAll Settings" = "FindAll 设置";
 "FindAll application icon" = "FindAll 应用图标";
 "Finder could not open the information window for the selected item." = "访达无法为所选项目打开简介窗口。";
@@ -103,6 +107,8 @@
 "Normal" = "普通";
 "Open selected items" = "打开所选项目";
 "Open" = "打开";
+"Open %lld Selected Items?" = "要打开所选的 %lld 个项目吗？";
+"Opening multiple items may open many windows or launch multiple applications." = "打开多个项目可能会同时打开许多窗口或启动多个应用。";
 "OK" = "好";
 "Open Containing Folder" = "打开所在文件夹";
 "Open With" = "打开方式";

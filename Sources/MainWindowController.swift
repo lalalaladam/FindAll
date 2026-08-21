@@ -31,6 +31,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var scrollerStyleObserver: NSObjectProtocol?
     private var volumeObservers: [NSObjectProtocol] = []
     private var sharingServicePicker: NSSharingServicePicker?
+    private var isOpenConfirmationPresented = false
     private var isAdjustingColumns = false
     private var hasRestoredFittedColumnLayout = false
     private var isSynchronizingSort = false
@@ -1276,7 +1277,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         guard row < results.count, let tableColumn else { return nil }
         let result = results[row]
         let identifier = tableColumn.identifier
-        let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView) ?? makeCell(identifier: identifier)
+        let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? ResultTableCellView) ?? makeCell(identifier: identifier)
 
         switch identifier.rawValue {
         case "name":
@@ -1290,13 +1291,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         case "modified": cell.textField?.stringValue = result.modifiedAt.map(Self.dateFormatter.string(from:)) ?? "—"
         default: break
         }
-        cell.toolTip = cell.textField?.stringValue
-        cell.textField?.toolTip = cell.textField?.stringValue
+        cell.fullToolTipText = identifier.rawValue == "kind" && !result.fullKind.isEmpty
+            ? result.fullKind
+            : cell.textField?.stringValue
+        cell.updateToolTip()
         return cell
     }
 
-    private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
-        let cell = NSTableCellView()
+    private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> ResultTableCellView {
+        let cell = ResultTableCellView()
         cell.identifier = identifier
         let image = NSImageView()
         image.translatesAutoresizingMaskIntoConstraints = false
@@ -1332,6 +1335,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     @objc func openSelection(_ sender: Any?) {
         let selectedResults = tableView.selectedRowIndexes.compactMap { $0 < results.count ? results[$0] : nil }
+        guard !selectedResults.isEmpty else { return }
+        confirmOpeningIfNeeded(itemCount: selectedResults.count) { [weak self] in
+            self?.open(selectedResults)
+        }
+    }
+
+    private func open(_ selectedResults: [SearchResult]) {
         let folders = selectedResults.filter(\.isDirectory).map(\.url)
         FileManagerSupport.openFolders(folders)
         selectedResults.filter { !$0.isDirectory }.forEach { NSWorkspace.shared.open($0.url) }
@@ -1344,12 +1354,46 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     @objc private func openSelectionWithApplication(_ sender: NSMenuItem) {
-        guard let applicationURL = sender.representedObject as? URL, !selectedURLs.isEmpty else { return }
-        NSWorkspace.shared.open(
-            selectedURLs,
-            withApplicationAt: applicationURL,
-            configuration: NSWorkspace.OpenConfiguration()
+        let urls = selectedURLs
+        guard let applicationURL = sender.representedObject as? URL, !urls.isEmpty else { return }
+        confirmOpeningIfNeeded(itemCount: urls.count) {
+            NSWorkspace.shared.open(
+                urls,
+                withApplicationAt: applicationURL,
+                configuration: NSWorkspace.OpenConfiguration()
+            )
+        }
+    }
+
+    private func confirmOpeningIfNeeded(itemCount: Int, action: @escaping () -> Void) {
+        guard itemCount > 1 else {
+            action()
+            return
+        }
+        guard !isOpenConfirmationPresented else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = String.localizedStringWithFormat(
+            L10n.string("Open %lld Selected Items?"),
+            Int64(itemCount)
         )
+        alert.informativeText = L10n.string("Opening multiple items may open many windows or launch multiple applications.")
+        let openButton = alert.addButton(withTitle: L10n.string("Open"))
+        openButton.keyEquivalent = ""
+        let cancelButton = alert.addButton(withTitle: L10n.string("Cancel"))
+        cancelButton.keyEquivalent = "\r"
+
+        isOpenConfirmationPresented = true
+        guard let window else {
+            isOpenConfirmationPresented = false
+            if alert.runModal() == .alertFirstButtonReturn { action() }
+            return
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            self?.isOpenConfirmationPresented = false
+            if response == .alertFirstButtonReturn { action() }
+        }
     }
 
     @objc func showFinderInfo(_ sender: Any?) {
@@ -1672,6 +1716,30 @@ private final class ActionTableView: NSTableView {
     }
 
     @objc func copy(_ sender: Any?) { onCopyFiles?() }
+}
+
+private final class ResultTableCellView: NSTableCellView {
+    var fullToolTipText: String?
+
+    override func layout() {
+        super.layout()
+        updateToolTip()
+    }
+
+    func updateToolTip() {
+        guard let textField, textField.bounds.width > 0 else {
+            toolTip = nil
+            return
+        }
+        textField.toolTip = nil
+        let displayedText = textField.stringValue
+        let completeText = fullToolTipText ?? displayedText
+        let isAbbreviated = completeText != displayedText
+        let measuredWidth = ceil(textField.attributedStringValue.size().width)
+        toolTip = isAbbreviated || measuredWidth > floor(textField.bounds.width)
+            ? completeText
+            : nil
+    }
 }
 
 private final class FittedTableHeaderView: NSTableHeaderView {

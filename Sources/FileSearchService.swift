@@ -1,5 +1,6 @@
 import CoreServices
 import Foundation
+import UniformTypeIdentifiers
 
 enum FilePathSupport {
     private static let dataVolumeMappings: [(physical: String, logical: String)] = [
@@ -45,6 +46,8 @@ struct SearchResult: Hashable {
     let url: URL
     let displayName: String
     let kind: String
+    let fullKind: String
+    let contentTypeIdentifier: String?
     let size: Int64?
     let modifiedAt: Date?
     let isDirectory: Bool
@@ -335,18 +338,87 @@ final class FileSearchService: NSObject {
             ?? item.value(forAttribute: NSMetadataItemFSNameKey) as? String
             ?? normalizedURL.lastPathComponent
         let typeTree = item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String] ?? []
+        let contentTypeIdentifier = item.value(forAttribute: NSMetadataItemContentTypeKey) as? String
+        let fullKind = item.value(forAttribute: NSMetadataItemKindKey) as? String ?? ""
+        let isDirectory = typeTree.contains("public.folder")
         return SearchResult(
             url: normalizedURL,
             displayName: displayName,
-            kind: item.value(forAttribute: NSMetadataItemKindKey) as? String ?? "",
+            kind: SearchResultKindSupport.displayKind(
+                for: normalizedURL,
+                contentTypeIdentifier: contentTypeIdentifier,
+                fullKind: fullKind,
+                isDirectory: isDirectory
+            ),
+            fullKind: fullKind,
+            contentTypeIdentifier: contentTypeIdentifier,
             size: (item.value(forAttribute: NSMetadataItemFSSizeKey) as? NSNumber)?.int64Value,
             modifiedAt: item.value(forAttribute: NSMetadataItemFSContentChangeDateKey) as? Date,
-            isDirectory: typeTree.contains("public.folder")
+            isDirectory: isDirectory
         )
     }
 
     deinit {
         removeNotificationObservers()
         activeQuery?.stop()
+    }
+}
+
+private enum SearchResultKindSupport {
+    private static let conciseExtensions: [String: String] = [
+        "doc": "Word", "docx": "Word", "docm": "Word", "dot": "Word", "dotx": "Word",
+        "xls": "Excel", "xlsx": "Excel", "xlsm": "Excel", "xlt": "Excel", "xltx": "Excel",
+        "ppt": "PowerPoint", "pptx": "PowerPoint", "pptm": "PowerPoint", "pot": "PowerPoint", "potx": "PowerPoint",
+        "pages": "Pages", "numbers": "Numbers", "key": "Keynote",
+        "pdf": "PDF", "rtf": "RTF", "csv": "CSV", "tsv": "TSV",
+        "txt": "Text", "text": "Text", "md": "Markdown", "markdown": "Markdown",
+        "json": "JSON", "xml": "XML", "yaml": "YAML", "yml": "YAML", "toml": "TOML", "plist": "Property List",
+        "html": "HTML", "htm": "HTML", "css": "CSS", "scss": "SCSS", "sass": "Sass", "less": "Less",
+        "js": "JavaScript", "mjs": "JavaScript", "cjs": "JavaScript", "jsx": "JavaScript",
+        "ts": "TypeScript", "tsx": "TypeScript", "swift": "Swift", "py": "Python", "rb": "Ruby",
+        "sh": "Shell", "bash": "Shell", "zsh": "Shell", "fish": "Shell", "sql": "SQL",
+        "c": "C", "h": "C Header", "cc": "C++", "cpp": "C++", "cxx": "C++", "hpp": "C++ Header",
+        "java": "Java", "kt": "Kotlin", "kts": "Kotlin", "go": "Go", "rs": "Rust",
+        "png": "PNG", "jpg": "JPEG", "jpeg": "JPEG", "gif": "GIF", "heic": "HEIC", "heif": "HEIF",
+        "svg": "SVG", "webp": "WebP", "tif": "TIFF", "tiff": "TIFF", "bmp": "BMP", "ico": "ICO",
+        "mp3": "MP3", "aac": "AAC", "m4a": "M4A", "flac": "FLAC", "wav": "WAV", "aiff": "AIFF", "ogg": "Ogg",
+        "mp4": "MP4", "mov": "MOV", "m4v": "M4V", "mkv": "MKV", "avi": "AVI", "webm": "WebM",
+        "zip": "ZIP", "rar": "RAR", "7z": "7Z", "tar": "TAR", "gz": "GZIP", "bz2": "BZIP2", "xz": "XZ",
+        "dmg": "Disk Image", "iso": "Disk Image"
+    ]
+
+    static func displayKind(
+        for url: URL,
+        contentTypeIdentifier: String?,
+        fullKind: String,
+        isDirectory: Bool
+    ) -> String {
+        if isDirectory { return L10n.string("Folder") }
+
+        let pathExtension = url.pathExtension.lowercased()
+        if pathExtension == "app" { return L10n.string("Application") }
+        if let conciseKind = conciseExtensions[pathExtension] {
+            return localizedKind(conciseKind)
+        }
+
+        if let contentTypeIdentifier, let type = UTType(contentTypeIdentifier) {
+            if type.conforms(to: .applicationBundle) { return L10n.string("Application") }
+            if type.conforms(to: .folder) { return L10n.string("Folder") }
+            if type.conforms(to: .plainText) { return L10n.string("Text") }
+            if type.conforms(to: .pdf) { return "PDF" }
+        }
+
+        if !fullKind.isEmpty { return fullKind }
+        if !pathExtension.isEmpty { return pathExtension.uppercased() }
+        return L10n.string("File")
+    }
+
+    private static func localizedKind(_ kind: String) -> String {
+        switch kind {
+        case "Text", "Property List", "Disk Image", "Application":
+            return L10n.string(kind)
+        default:
+            return kind
+        }
     }
 }
