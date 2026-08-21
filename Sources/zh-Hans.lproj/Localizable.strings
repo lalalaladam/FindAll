@@ -83,7 +83,7 @@
 "Language" = "语言";
 "Application language:" = "应用语言：";
 "Keep folders above files within the same priority" = "同一优先级内文件夹置顶";
-"Keep on top in current Space" = "当前 Space 置顶";
+"Keep on top in current Space" = "窗口置顶";
 "Keep manually adjusted widths" = "保留手动调整的列宽";
 "Keyboard Shortcuts" = "键盘快捷键";
 "Kind (A–Z)" = "类型（A–Z）";
@@ -160,7 +160,7 @@
 "Show All" = "全部显示";
 "Show FindAll" = "显示 FindAll";
 "Show or hide FindAll" = "显示或隐藏 FindAll";
-"Show on all Spaces" = "所有 Space 显示";
+"Show on all Spaces" = "在所有桌面显示";
 "System Default" = "系统默认";
 "Size (Largest First)" = "大小（最大优先）";
 "Size (Smallest First)" = "大小（最小优先）";

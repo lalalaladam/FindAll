@@ -18,8 +18,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private let tableView = ActionTableView()
     private let statusLabel = WindowDragTextField(labelWithString: L10n.string("Type a query and press Return"))
     private let spinner = NSProgressIndicator()
-    private let keepOnTopButton = NSButton(checkboxWithTitle: L10n.string("Keep on top in current Space"), target: nil, action: nil)
-    private let allSpacesButton = NSButton(checkboxWithTitle: L10n.string("Show on all Spaces"), target: nil, action: nil)
+    private let keepOnTopSwitch = NSSwitch()
+    private let allSpacesSwitch = NSSwitch()
     private let searchService = FileSearchService()
     private var candidates: [SearchResult] = []
     private var results: [SearchResult] = []
@@ -36,6 +36,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var hasRestoredFittedColumnLayout = false
     private var isSynchronizingSort = false
     private var isFilterRefreshScheduled = false
+    private var saveWindowOriginWorkItem: DispatchWorkItem?
     private var activeColumnSizingMode = WindowPreferences.columnSizingMode
     private var activeSortMode = SearchPreferences.sortMode
     private var observedDefaultSortMode = SearchPreferences.sortMode
@@ -114,6 +115,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     required init?(coder: NSCoder) { nil }
 
     deinit {
+        saveWindowOriginWorkItem?.cancel()
         if let preferencesObserver { NotificationCenter.default.removeObserver(preferencesObserver) }
         if let windowPreferencesObserver { NotificationCenter.default.removeObserver(windowPreferencesObserver) }
         if let resetColumnLayoutObserver { NotificationCenter.default.removeObserver(resetColumnLayoutObserver) }
@@ -186,13 +188,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let statusSpacer = WindowDragView()
         statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let statusBar = WindowDragStackView(views: [spinner, statusLabel, statusSpacer, keepOnTopButton, allSpacesButton])
+        let keepOnTopControl = labeledSwitch(
+            title: L10n.string("Keep on top in current Space"),
+            control: keepOnTopSwitch
+        )
+        let allSpacesControl = labeledSwitch(
+            title: L10n.string("Show on all Spaces"),
+            control: allSpacesSwitch
+        )
+        let statusBar = WindowDragStackView(views: [spinner, statusLabel, statusSpacer, keepOnTopControl, allSpacesControl])
         statusBar.orientation = .horizontal
         statusBar.alignment = .centerY
         statusBar.spacing = 8
         statusBar.translatesAutoresizingMaskIntoConstraints = false
+        let statusSeparator = NSBox()
+        statusSeparator.boxType = .separator
+        statusSeparator.translatesAutoresizingMaskIntoConstraints = false
 
-        [searchField, matchModeControl, filterBar, scrollView, statusBar].forEach(content.addSubview)
+        [searchField, matchModeControl, filterBar, scrollView, statusSeparator, statusBar].forEach(content.addSubview)
 
         NSLayoutConstraint.activate([
             searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: 7),
@@ -215,6 +228,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: statusBar.topAnchor, constant: -5),
 
+            statusSeparator.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            statusSeparator.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            statusSeparator.bottomAnchor.constraint(equalTo: statusBar.topAnchor, constant: -2),
+
             statusBar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
             statusBar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             statusBar.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -5),
@@ -236,6 +253,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         return label
     }
 
+    private func labeledSwitch(title: String, control: NSSwitch) -> NSStackView {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 12)
+        control.setAccessibilityLabel(title)
+        let stack = NSStackView(views: [label, control])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 6
+        return stack
+    }
+
     private func configureFilterControls() {
         scopePopup.controlSize = .small
         scopePopup.preferredEdge = .minY
@@ -252,13 +280,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         foldersFirstButton.target = self
         foldersFirstButton.action = #selector(foldersFirstChanged(_:))
 
-        keepOnTopButton.controlSize = .small
-        keepOnTopButton.target = self
-        keepOnTopButton.action = #selector(windowBehaviorChanged(_:))
+        keepOnTopSwitch.controlSize = .small
+        keepOnTopSwitch.target = self
+        keepOnTopSwitch.action = #selector(windowBehaviorChanged(_:))
 
-        allSpacesButton.controlSize = .small
-        allSpacesButton.target = self
-        allSpacesButton.action = #selector(windowBehaviorChanged(_:))
+        allSpacesSwitch.controlSize = .small
+        allSpacesSwitch.target = self
+        allSpacesSwitch.action = #selector(windowBehaviorChanged(_:))
 
         settingsButton.bezelStyle = .texturedRounded
         settingsButton.controlSize = .small
@@ -846,6 +874,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func windowWillClose(_ notification: Notification) {
+        saveWindowOriginWorkItem?.cancel()
+        saveWindowOriginWorkItem = nil
+        saveWindowOrigin()
         if WindowPreferences.startupSize == .previous, let window {
             WindowPreferences.savedSize = window.frame.size
         }
@@ -853,9 +884,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func windowDidMove(_ notification: Notification) {
-        if WindowPreferences.placement == .remember, let window {
-            WindowPreferences.savedOrigin = window.frame.origin
+        guard WindowPreferences.placement == .remember else { return }
+        saveWindowOriginWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.saveWindowOriginWorkItem = nil
+            self?.saveWindowOrigin()
         }
+        saveWindowOriginWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+    }
+
+    private func saveWindowOrigin() {
+        guard WindowPreferences.placement == .remember, let window else { return }
+        WindowPreferences.savedOrigin = window.frame.origin
     }
 
     func tableViewColumnDidResize(_ notification: Notification) {
@@ -1540,25 +1581,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func restoreWindowBehavior() {
-        keepOnTopButton.state = WindowPreferences.keepOnTop ? .on : .off
-        allSpacesButton.state = WindowPreferences.showOnAllSpaces ? .on : .off
+        keepOnTopSwitch.state = WindowPreferences.keepOnTop ? .on : .off
+        allSpacesSwitch.state = WindowPreferences.showOnAllSpaces ? .on : .off
         applyWindowBehavior()
     }
 
-    @objc private func windowBehaviorChanged(_ sender: NSButton) {
-        if sender === keepOnTopButton {
+    @objc private func windowBehaviorChanged(_ sender: NSSwitch) {
+        if sender === keepOnTopSwitch {
             WindowPreferences.keepOnTop = sender.state == .on
-        } else if sender === allSpacesButton {
+        } else if sender === allSpacesSwitch {
             WindowPreferences.showOnAllSpaces = sender.state == .on
         }
     }
 
     private func applyWindowBehavior() {
         guard let window else { return }
-        window.level = keepOnTopButton.state == .on ? .floating : .normal
+        window.level = keepOnTopSwitch.state == .on ? .floating : .normal
         var behavior = window.collectionBehavior
         behavior.remove([.canJoinAllSpaces, .fullScreenAuxiliary])
-        if allSpacesButton.state == .on {
+        if allSpacesSwitch.state == .on {
             behavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
         }
         window.collectionBehavior = behavior
