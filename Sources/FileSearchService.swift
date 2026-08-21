@@ -64,26 +64,32 @@ enum SearchFailure {
     case timedOut
 }
 
+enum SearchResultCoverage {
+    case complete
+    case candidateLimitReached
+    case timedOut
+}
+
 enum SearchUpdate {
     case idle
     case started
-    case results([SearchResult], reachedLimit: Bool)
+    case gathering(Int)
+    case results([SearchResult], coverage: SearchResultCoverage)
     case failed(SearchFailure)
 }
 
-final class FileSearchService {
+final class FileSearchService: NSObject {
     var onUpdate: ((SearchUpdate) -> Void)?
 
-    private let resultLimit = 2_000
+    /// Keeps broad searches bounded while allowing the UI to rank a substantially
+    /// larger candidate set than it displays.
+    private let candidateLimit = 20_000
     private let queryTimeout: TimeInterval = 30
-    private let queryQueue = DispatchQueue(
-        label: "com.lalalaladam.FindAll.metadata-query",
-        qos: .userInitiated,
-        attributes: .concurrent
-    )
     private var generation = 0
     private var timeoutWorkItem: DispatchWorkItem?
-    private var activeQuery: MDQuery?
+    private var activeQuery: NSMetadataQuery?
+    private var activeRequest: SearchRequest?
+    private var notificationTokens: [NSObjectProtocol] = []
 
     func search(_ request: SearchRequest) {
         precondition(Thread.isMainThread)
@@ -115,170 +121,232 @@ final class FileSearchService {
 
     private func startQuery(_ request: SearchRequest, generation: Int) {
         guard generation == self.generation else { return }
-        let expression = Self.makeQueryExpression(for: request)
-        guard let query = MDQueryCreate(kCFAllocatorDefault, expression as NSString, nil, nil) else {
-            onUpdate?(.failed(.couldNotStart))
-            return
-        }
-
-        MDQuerySetMaxCount(query, resultLimit)
-        let scopes: NSArray
+        let query = NSMetadataQuery()
+        query.predicate = Self.makePredicate(for: request)
+        query.notificationBatchingInterval = 0.2
         if let scopePath = request.scopePath {
-            scopes = [URL(fileURLWithPath: scopePath).standardizedFileURL.path]
-        } else {
-            scopes = [kMDQueryScopeAllIndexed!]
+            query.searchScopes = [URL(fileURLWithPath: scopePath).standardizedFileURL.path]
         }
-        MDQuerySetSearchScope(query, scopes, 0)
+        // The default empty scope is intentionally retained for "All Locations".
+        // It avoids restricting results to kMDQueryScopeAllIndexed and also avoids
+        // the runtime exception seen with NSMetadataQueryLocalComputerScope on an
+        // affected macOS version.
 
         activeQuery = query
+        activeRequest = request
+        observe(query, request: request, generation: generation)
         NSLog(
-            "FindAll bounded Spotlight query %d starting (mode=%@, category=%@, customScope=%@, limit=%d)",
+            "FindAll Spotlight query %d starting (mode=%@, category=%@, customScope=%@, candidateLimit=%d)",
             generation,
             request.matchMode.rawValue,
             request.category.rawValue,
             request.scopePath == nil ? "no" : "yes",
-            resultLimit
+            candidateLimit
         )
         onUpdate?(.started)
-
-        let timeoutWorkItem = DispatchWorkItem { [weak self, weak query] in
-            guard let self, let query, self.isCurrent(query, generation: generation) else { return }
-            self.generation += 1
-            self.stopActiveQuery()
-            NSLog("FindAll bounded Spotlight query %d timed out", generation)
-            self.onUpdate?(.failed(.timedOut))
-        }
-        self.timeoutWorkItem = timeoutWorkItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + queryTimeout, execute: timeoutWorkItem)
-
-        queryQueue.async { [weak self] in
-            let started = MDQueryExecute(query, CFOptionFlags(kMDQuerySynchronous.rawValue))
-            let count = max(0, Int(MDQueryGetResultCount(query)))
-            let reachedLimit = count >= (self?.resultLimit ?? 2_000)
-            let results = started ? Self.makeResults(from: query, count: count) : []
-            DispatchQueue.main.async { [weak self] in
-                self?.finishQuery(
-                    query,
-                    generation: generation,
-                    started: started,
-                    results: results,
-                    reachedLimit: reachedLimit
-                )
-            }
-        }
-    }
-
-    private func finishQuery(
-        _ query: MDQuery,
-        generation: Int,
-        started: Bool,
-        results: [SearchResult],
-        reachedLimit: Bool
-    ) {
-        guard isCurrent(query, generation: generation) else { return }
-        timeoutWorkItem?.cancel()
-        timeoutWorkItem = nil
-        activeQuery = nil
-        guard started else {
-            NSLog("FindAll bounded Spotlight query %d failed to execute", generation)
+        guard query.start() else {
+            stopActiveQuery()
             onUpdate?(.failed(.couldNotStart))
             return
         }
-        NSLog(
-            "FindAll bounded Spotlight query %d finished with %d results (limitReached=%@)",
-            generation,
-            results.count,
-            reachedLimit ? "yes" : "no"
-        )
-        onUpdate?(.results(results, reachedLimit: reachedLimit))
+
+        let timeoutWorkItem = DispatchWorkItem { [weak self, weak query] in
+            guard let self, let query,
+                  self.isCurrent(query, request: request, generation: generation) else { return }
+            if query.resultCount > 0 {
+                self.finishQuery(query, request: request, generation: generation, coverage: .timedOut)
+            } else {
+                self.generation += 1
+                self.stopActiveQuery()
+                NSLog("FindAll Spotlight query %d timed out without results", generation)
+                self.onUpdate?(.failed(.timedOut))
+            }
+        }
+        self.timeoutWorkItem = timeoutWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + queryTimeout, execute: timeoutWorkItem)
     }
 
-    private func isCurrent(_ query: MDQuery, generation: Int) -> Bool {
-        generation == self.generation && activeQuery.map { query === $0 } == true
+    private func observe(_ query: NSMetadataQuery, request: SearchRequest, generation: Int) {
+        let center = NotificationCenter.default
+        let progress = center.addObserver(
+            forName: .NSMetadataQueryGatheringProgress,
+            object: query,
+            queue: .main
+        ) { [weak self, weak query] _ in
+            guard let self, let query,
+                  self.isCurrent(query, request: request, generation: generation) else { return }
+            self.onUpdate?(.gathering(query.resultCount))
+        }
+        let finished = center.addObserver(
+            forName: .NSMetadataQueryDidFinishGathering,
+            object: query,
+            queue: .main
+        ) { [weak self, weak query] _ in
+            guard let self, let query,
+                  self.isCurrent(query, request: request, generation: generation) else { return }
+            self.finishQuery(query, request: request, generation: generation, coverage: .complete)
+        }
+        notificationTokens = [progress, finished]
+    }
+
+    private func finishQuery(
+        _ query: NSMetadataQuery,
+        request: SearchRequest,
+        generation: Int,
+        coverage requestedCoverage: SearchResultCoverage
+    ) {
+        guard isCurrent(query, request: request, generation: generation) else { return }
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+        query.disableUpdates()
+        let rawCount = query.resultCount
+        let conversion = Self.makeResults(from: query, request: request, limit: candidateLimit)
+        let coverage: SearchResultCoverage = conversion.reachedLimit ? .candidateLimitReached : requestedCoverage
+
+        activeQuery = nil
+        activeRequest = nil
+        removeNotificationObservers()
+        query.stop()
+        NSLog(
+            "FindAll Spotlight query %d finished (raw=%d, converted=%d, missingPath=%d, literalRejected=%d, coverage=%@)",
+            generation,
+            rawCount,
+            conversion.results.count,
+            conversion.missingPathCount,
+            conversion.literalRejectedCount,
+            String(describing: coverage)
+        )
+        onUpdate?(.results(conversion.results, coverage: coverage))
+    }
+
+    private func isCurrent(_ query: NSMetadataQuery, request: SearchRequest, generation: Int) -> Bool {
+        generation == self.generation
+            && query === activeQuery
+            && request == activeRequest
     }
 
     private func stopActiveQuery() {
         timeoutWorkItem?.cancel()
         timeoutWorkItem = nil
-        guard let query = activeQuery else { return }
-        activeQuery = nil
-        queryQueue.async {
-            MDQueryStop(query)
+        removeNotificationObservers()
+        guard let query = activeQuery else {
+            activeRequest = nil
+            return
         }
+        activeQuery = nil
+        activeRequest = nil
+        query.stop()
     }
 
-    private static func makeQueryExpression(for request: SearchRequest) -> String {
-        let escaped = escapeQueryValue(request.text)
-        let pattern: String
+    private func removeNotificationObservers() {
+        let center = NotificationCenter.default
+        notificationTokens.forEach(center.removeObserver)
+        notificationTokens.removeAll()
+    }
+
+    private static func makePredicate(for request: SearchRequest) -> NSPredicate {
+        let nameKey = NSMetadataItemDisplayNameKey
+        let namePredicate: NSPredicate
         switch request.matchMode {
         case .contains:
-            pattern = "*\(escaped)*"
+            namePredicate = NSPredicate(format: "%K CONTAINS[cd] %@", nameKey, request.text)
         case .prefix:
-            pattern = "\(escaped)*"
+            namePredicate = NSPredicate(format: "%K BEGINSWITH[cd] %@", nameKey, request.text)
         case .exact:
-            pattern = escaped
+            namePredicate = NSPredicate(format: "%K ==[cd] %@", nameKey, request.text)
         }
-        let nameExpression = "(kMDItemFSName == \"\(pattern)\"cd || kMDItemDisplayName == \"\(pattern)\"cd)"
-        var expressions = [nameExpression]
-        if let categoryExpression = request.category.metadataQueryExpression {
-            expressions.append(categoryExpression)
-        }
-        return expressions.count == 1
-            ? expressions[0]
-            : "(" + expressions.joined(separator: " && ") + ")"
+        guard let categoryPredicate = request.category.metadataPredicate else { return namePredicate }
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [namePredicate, categoryPredicate])
     }
 
-    private static func escapeQueryValue(_ value: String) -> String {
-        value.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "*", with: "\\*")
-            .replacingOccurrences(of: "?", with: "\\?")
+    private struct ResultConversion {
+        var results: [SearchResult]
+        var reachedLimit: Bool
+        var missingPathCount: Int
+        var literalRejectedCount: Int
     }
 
-    private static func makeResults(from query: MDQuery, count: Int) -> [SearchResult] {
+    private static func makeResults(
+        from query: NSMetadataQuery,
+        request: SearchRequest,
+        limit: Int
+    ) -> ResultConversion {
         var results: [SearchResult] = []
         var seenURLs = Set<URL>()
-        results.reserveCapacity(count)
-        for index in 0..<count {
-            guard let rawResult = MDQueryGetResultAtIndex(query, index) else { continue }
-            let item = unsafeBitCast(rawResult, to: MDItem.self)
-            if let result = makeResult(item), seenURLs.insert(result.url.standardizedFileURL).inserted {
-                results.append(result)
+        var missingPathCount = 0
+        var literalRejectedCount = 0
+        results.reserveCapacity(min(query.resultCount, limit))
+
+        for index in 0..<query.resultCount {
+            guard let item = query.result(at: index) as? NSMetadataItem,
+                  let result = makeResult(item) else {
+                missingPathCount += 1
+                continue
             }
+            guard matchesLiteralName(result.displayName, request: request) else {
+                literalRejectedCount += 1
+                continue
+            }
+            guard seenURLs.insert(result.url.standardizedFileURL).inserted else { continue }
+            if results.count == limit {
+                return ResultConversion(
+                    results: results,
+                    reachedLimit: true,
+                    missingPathCount: missingPathCount,
+                    literalRejectedCount: literalRejectedCount
+                )
+            }
+            results.append(result)
         }
-        return results
+        return ResultConversion(
+            results: results,
+            reachedLimit: false,
+            missingPathCount: missingPathCount,
+            literalRejectedCount: literalRejectedCount
+        )
     }
 
-    private static func makeResult(_ item: MDItem) -> SearchResult? {
-        let names: NSArray = [
-            kMDItemPath!,
-            kMDItemDisplayName!,
-            kMDItemFSName!,
-            kMDItemKind!,
-            kMDItemFSSize!,
-            kMDItemContentModificationDate!,
-            kMDItemContentTypeTree!
-        ]
-        guard let attributes = MDItemCopyAttributes(item, names) as? [String: Any],
-              let path = attributes[kMDItemPath as String] as? String else { return nil }
-        let url = FilePathSupport.userFacingURL(URL(fileURLWithPath: path))
-        let displayName = attributes[kMDItemDisplayName as String] as? String
-            ?? attributes[kMDItemFSName as String] as? String
-            ?? url.lastPathComponent
-        let typeTree = attributes[kMDItemContentTypeTree as String] as? [String] ?? []
+    private static func matchesLiteralName(_ name: String, request: SearchRequest) -> Bool {
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]
+        switch request.matchMode {
+        case .contains:
+            return name.range(of: request.text, options: options) != nil
+        case .prefix:
+            return name.range(of: request.text, options: options.union(.anchored)) != nil
+        case .exact:
+            return name.compare(request.text, options: options) == .orderedSame
+        }
+    }
+
+    private static func makeResult(_ item: NSMetadataItem) -> SearchResult? {
+        let url: URL?
+        if let itemURL = item.value(forAttribute: NSMetadataItemURLKey) as? URL {
+            url = itemURL
+        } else if let itemURL = item.value(forAttribute: NSMetadataItemURLKey) as? NSURL {
+            url = itemURL as URL
+        } else if let path = item.value(forAttribute: NSMetadataItemPathKey) as? String {
+            url = URL(fileURLWithPath: path)
+        } else {
+            url = nil
+        }
+        guard let url else { return nil }
+        let normalizedURL = FilePathSupport.userFacingURL(url)
+        let displayName = item.value(forAttribute: NSMetadataItemDisplayNameKey) as? String
+            ?? item.value(forAttribute: NSMetadataItemFSNameKey) as? String
+            ?? normalizedURL.lastPathComponent
+        let typeTree = item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String] ?? []
         return SearchResult(
-            url: url,
+            url: normalizedURL,
             displayName: displayName,
-            kind: attributes[kMDItemKind as String] as? String ?? "",
-            size: (attributes[kMDItemFSSize as String] as? NSNumber)?.int64Value,
-            modifiedAt: attributes[kMDItemContentModificationDate as String] as? Date,
+            kind: item.value(forAttribute: NSMetadataItemKindKey) as? String ?? "",
+            size: (item.value(forAttribute: NSMetadataItemFSSizeKey) as? NSNumber)?.int64Value,
+            modifiedAt: item.value(forAttribute: NSMetadataItemFSContentChangeDateKey) as? Date,
             isDirectory: typeTree.contains("public.folder")
         )
     }
 
     deinit {
-        if let query = activeQuery {
-            MDQueryStop(query)
-        }
+        removeNotificationObservers()
+        activeQuery?.stop()
     }
 }

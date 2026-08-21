@@ -166,6 +166,10 @@
 "Spotlight search timed out." = "Spotlight 搜索已超时。";
 "Starting Spotlight search…" = "正在启动 Spotlight 搜索…";
 "Showing first %lld results (limit reached)" = "结果已达上限，仅显示前 %lld 项";
+"Searching… %lld candidates found" = "正在搜索…已发现 %lld 个候选项";
+"Showing first %1$lld results (at least %2$lld matches)" = "至少有 %2$lld 个匹配项，仅显示排序后的前 %1$lld 项";
+"Showing %lld partial results (search timed out)" = "搜索超时，显示已找到的 %lld 项部分结果";
+"Showing first %1$lld of %2$lld results" = "共 %2$lld 个结果，显示排序后的前 %1$lld 项";
 "Status: %@" = "状态：%@";
 "That shortcut is already assigned to “%@”." = "该快捷键已分配给“%@”。";
 "That shortcut is reserved by a standard macOS command." = "该快捷键由标准 macOS 命令保留。";

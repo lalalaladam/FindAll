@@ -40,6 +40,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var observedDefaultSortMode = SearchPreferences.sortMode
 
     private static let fullDiskAccessNoticeKey = "privacy.fullDiskAccessNoticeShown.v2"
+    private static let displayedResultLimit = 2_000
     private static let defaultColumnOrder = ["name", "path", "kind", "size", "modified"]
     private static let defaultColumnWidths: [String: CGFloat] = [
         "name": 260,
@@ -999,16 +1000,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 self.tableView.deselectAll(nil)
                 self.spinner.startAnimation(nil)
                 self.statusLabel.stringValue = L10n.string("Starting Spotlight search…")
-            case let .results(results, reachedLimit):
+            case let .gathering(count):
+                self.statusLabel.stringValue = String.localizedStringWithFormat(
+                    L10n.string("Searching… %lld candidates found"),
+                    Int64(count)
+                )
+            case let .results(results, coverage):
                 self.candidates = results
                 self.applyRanking()
                 self.spinner.stopAnimation(nil)
-                if reachedLimit {
+                switch coverage {
+                case .candidateLimitReached:
                     self.statusLabel.stringValue = String.localizedStringWithFormat(
-                        L10n.string("Showing first %lld results (limit reached)"),
+                        L10n.string("Showing first %1$lld results (at least %2$lld matches)"),
+                        Int64(self.results.count),
+                        Int64(self.candidates.count)
+                    )
+                case .timedOut:
+                    self.statusLabel.stringValue = String.localizedStringWithFormat(
+                        L10n.string("Showing %lld partial results (search timed out)"),
                         Int64(self.results.count)
                     )
-                } else {
+                case .complete where self.candidates.count > Self.displayedResultLimit:
+                    self.statusLabel.stringValue = String.localizedStringWithFormat(
+                        L10n.string("Showing first %1$lld of %2$lld results"),
+                        Int64(self.results.count),
+                        Int64(self.candidates.count)
+                    )
+                case .complete:
                     self.statusLabel.stringValue = self.results.isEmpty
                         ? L10n.string("No matching Spotlight results. Protected locations may require Full Disk Access.")
                         : String.localizedStringWithFormat(L10n.string("%lld results"), Int64(self.results.count))
@@ -1081,7 +1100,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let rankings = candidates.reduce(into: [URL: (priority: Int, ruleOrder: Int)]()) { values, result in
             values[result.url] = SearchPreferences.ranking(for: result.url, rules: folderRules)
         }
-        results = candidates.sorted { lhs, rhs in
+        let sortedCandidates = candidates.sorted { lhs, rhs in
             if prioritizeFolderRules {
                 let lhsRanking = rankings[lhs.url] ?? (priority: Int.max, ruleOrder: Int.max)
                 let rhsRanking = rankings[rhs.url] ?? (priority: Int.max, ruleOrder: Int.max)
@@ -1134,6 +1153,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 return comparison == .orderedAscending
             }
         }
+        results = Array(sortedCandidates.prefix(Self.displayedResultLimit))
         tableView.reloadData()
         tableView.deselectAll(nil)
         if !selectedURLs.isEmpty {
