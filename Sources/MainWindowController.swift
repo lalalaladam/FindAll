@@ -508,20 +508,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         var widths = initialWidths
         if delta >= 0 {
-            let capacity = columns.indices.dropFirst(dividerIndex + 1).reduce(CGFloat.zero) { result, index in
-                result + max(0, initialWidths[index] - columns[index].minWidth)
-            }
-            let adjustment = min(delta, capacity)
+            let adjustment = shrinkFittedWidths(
+                &widths,
+                columns: columns,
+                candidateIndices: Array(columns.indices.dropFirst(dividerIndex + 1)),
+                by: delta
+            )
             widths[dividerIndex] = initialWidths[dividerIndex] + adjustment
-            var remaining = adjustment
-            for index in columns.indices.dropFirst(dividerIndex + 1) where remaining > 0.5 {
-                let reduction = min(remaining, max(0, initialWidths[index] - columns[index].minWidth))
-                widths[index] = initialWidths[index] - reduction
-                remaining -= reduction
-            }
         } else {
-            let adjustment = min(-delta, max(0, initialWidths[dividerIndex] - columns[dividerIndex].minWidth))
-            widths[dividerIndex] = initialWidths[dividerIndex] - adjustment
+            let adjustment = shrinkFittedWidths(
+                &widths,
+                columns: columns,
+                candidateIndices: Array(columns.indices.prefix(dividerIndex + 1)),
+                by: -delta
+            )
             widths[dividerIndex + 1] = initialWidths[dividerIndex + 1] + adjustment
         }
 
@@ -532,8 +532,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         tableView.headerView?.needsDisplay = true
     }
 
+    private func shrinkFittedWidths(
+        _ widths: inout [CGFloat],
+        columns: [NSTableColumn],
+        candidateIndices: [Int],
+        by requestedReduction: CGFloat
+    ) -> CGFloat {
+        var remainingReduction = requestedReduction
+        let shrinkGroups = [
+            ["path"],
+            ["kind", "size"],
+            ["name", "modified"]
+        ]
+
+        for identifiers in shrinkGroups where remainingReduction > 0.5 {
+            let indices = candidateIndices.filter { identifiers.contains(columns[$0].identifier.rawValue) }
+            let capacities = indices.map { max(0, widths[$0] - columns[$0].minWidth) }
+            let totalCapacity = capacities.reduce(0, +)
+            guard totalCapacity > 0 else { continue }
+
+            let groupReduction = min(remainingReduction, totalCapacity)
+            var unallocatedReduction = groupReduction
+            for (offset, index) in indices.enumerated() {
+                let reduction = offset == indices.count - 1
+                    ? min(capacities[offset], unallocatedReduction)
+                    : min(capacities[offset], groupReduction * capacities[offset] / totalCapacity)
+                widths[index] -= reduction
+                unallocatedReduction -= reduction
+            }
+            remainingReduction -= groupReduction - max(0, unallocatedReduction)
+        }
+
+        return requestedReduction - max(0, remainingReduction)
+    }
+
     private func restoreColumnWidths(forKey key: String) {
         guard let widths = UserDefaults.standard.dictionary(forKey: key) as? [String: Double] else { return }
+        let wasAdjustingColumns = isAdjustingColumns
+        isAdjustingColumns = true
+        defer { isAdjustingColumns = wasAdjustingColumns }
         for column in tableView.tableColumns {
             if let width = widths[column.identifier.rawValue] { column.width = max(column.minWidth, width) }
         }
@@ -1368,7 +1405,7 @@ private final class FittedTableHeaderView: NSTableHeaderView {
         }
 
         // The trailing table edge is fixed in fitted mode. Inner dividers exchange
-        // width with the columns to their right while the pointer is tracking.
+        // width with the columns on the opposite side while the pointer is tracking.
         guard dividerIndex + 1 < tableView.tableColumns.count else { return }
         let initialX = convert(event.locationInWindow, from: nil).x
         let initialWidths = tableView.tableColumns.map(\.width)

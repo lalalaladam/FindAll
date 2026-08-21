@@ -266,7 +266,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private var folderRules: [FolderRule] = []
     private var windowPreferencesObserver: NSObjectProtocol?
     private var isWindowSettingsRefreshScheduled = false
-    private let placementPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let centerPlacementButton = NSButton(radioButtonWithTitle: WindowPlacement.center.title, target: nil, action: nil)
+    private let rememberPlacementButton = NSButton(radioButtonWithTitle: WindowPlacement.remember.title, target: nil, action: nil)
     private let startupSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let columnSizingPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let settingsKeepOnTopButton = NSButton(checkboxWithTitle: String(localized: "Keep on top in current Space"), target: nil, action: nil)
@@ -429,13 +430,15 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         windowHeading.font = .boldSystemFont(ofSize: 17)
         let placementLabel = NSTextField(labelWithString: String(localized: "When showing FindAll:"))
 
-        for placement in WindowPlacement.allCases {
-            placementPopup.addItem(withTitle: placement.title)
-            placementPopup.lastItem?.representedObject = placement.rawValue
-        }
-        placementPopup.target = self
-        placementPopup.action = #selector(windowPlacementChanged(_:))
-        placementPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        centerPlacementButton.target = self
+        centerPlacementButton.action = #selector(windowPlacementChanged(_:))
+        rememberPlacementButton.target = self
+        rememberPlacementButton.action = #selector(windowPlacementChanged(_:))
+        let placementOptions = NSStackView(views: [centerPlacementButton, rememberPlacementButton])
+        placementOptions.orientation = .vertical
+        placementOptions.alignment = .leading
+        placementOptions.spacing = 5
+        placementOptions.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         let startupSizeLabel = NSTextField(labelWithString: String(localized: "At app launch:"))
         for mode in WindowStartupSize.allCases {
@@ -474,9 +477,9 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         fileManagerPopup.action = #selector(fileManagerChanged(_:))
         fileManagerPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
-        let placementRow = NSStackView(views: [placementLabel, placementPopup])
+        let placementRow = NSStackView(views: [placementLabel, placementOptions])
         placementRow.orientation = .horizontal
-        placementRow.alignment = .centerY
+        placementRow.alignment = .top
         placementRow.spacing = 12
         let startupSizeRow = NSStackView(views: [startupSizeLabel, startupSizePopup])
         startupSizeRow.orientation = .horizontal
@@ -675,7 +678,9 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     private func refreshWindowSettings() {
-        selectItem(in: placementPopup, representedObject: WindowPreferences.placement.rawValue)
+        let placement = WindowPreferences.placement
+        centerPlacementButton.state = placement == .center ? .on : .off
+        rememberPlacementButton.state = placement == .remember ? .on : .off
         selectItem(in: startupSizePopup, representedObject: WindowPreferences.startupSize.rawValue)
         selectItem(in: columnSizingPopup, representedObject: WindowPreferences.columnSizingMode.rawValue)
         settingsKeepOnTopButton.state = WindowPreferences.keepOnTop ? .on : .off
@@ -714,9 +719,15 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         }
     }
 
-    @objc private func windowPlacementChanged(_ sender: NSPopUpButton) {
-        guard let rawValue = sender.selectedItem?.representedObject as? String,
-              let placement = WindowPlacement(rawValue: rawValue) else { return }
+    @objc private func windowPlacementChanged(_ sender: NSButton) {
+        let placement: WindowPlacement
+        if sender === centerPlacementButton {
+            placement = .center
+        } else if sender === rememberPlacementButton {
+            placement = .remember
+        } else {
+            return
+        }
         WindowPreferences.placement = placement
     }
 
