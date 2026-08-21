@@ -139,11 +139,11 @@ enum SearchMatchMode: String, CaseIterable, Codable {
     var toolTip: String {
         switch self {
         case .contains:
-            return L10n.string("Matches file names that contain the entered text.")
+            return L10n.string("Matches file names that contain the entered text")
         case .prefix:
-            return L10n.string("Matches file names that start with the entered text.")
+            return L10n.string("Matches file names that start with the entered text")
         case .exact:
-            return L10n.string("Matches the complete file name.")
+            return L10n.string("Matches the complete file name")
         }
     }
 }
@@ -492,9 +492,9 @@ enum SearchPreferences {
     }
 
     static var scopePath: String? {
-        get { UserDefaults.standard.string(forKey: Key.scopePath) }
+        get { UserDefaults.standard.string(forKey: Key.scopePath).map(FilePathSupport.userFacingPath) }
         set {
-            if let newValue { UserDefaults.standard.set(newValue, forKey: Key.scopePath) }
+            if let newValue { UserDefaults.standard.set(FilePathSupport.userFacingPath(newValue), forKey: Key.scopePath) }
             else { UserDefaults.standard.removeObject(forKey: Key.scopePath) }
             notify()
         }
@@ -542,10 +542,13 @@ enum SearchPreferences {
         get {
             guard let data = UserDefaults.standard.data(forKey: Key.folderRules),
                   let rules = try? JSONDecoder().decode([FolderRule].self, from: data) else { return [] }
-            return rules
+            return rules.map { FolderRule(path: FilePathSupport.userFacingPath($0.path), priority: $0.priority) }
         }
         set {
-            if let data = try? JSONEncoder().encode(newValue) {
+            let normalizedRules = newValue.map {
+                FolderRule(path: FilePathSupport.userFacingPath($0.path), priority: $0.priority)
+            }
+            if let data = try? JSONEncoder().encode(normalizedRules) {
                 UserDefaults.standard.set(data, forKey: Key.folderRules)
             }
             notify()
@@ -553,6 +556,7 @@ enum SearchPreferences {
     }
 
     static func addFolder(path: String, priority: FolderPriority = .normal) {
+        let path = FilePathSupport.userFacingPath(path)
         var rules = folderRules
         if let index = rules.firstIndex(where: { $0.path == path }) {
             rules[index].priority = priority
@@ -563,10 +567,10 @@ enum SearchPreferences {
     }
 
     static func ranking(for url: URL, rules: [FolderRule]) -> (priority: Int, ruleOrder: Int)? {
-        let itemComponents = url.standardizedFileURL.pathComponents
+        let itemComponents = FilePathSupport.userFacingURL(url).standardizedFileURL.pathComponents
         return rules.enumerated().compactMap { index, rule -> (priority: Int, ruleOrder: Int)? in
             guard rule.priority != .normal else { return nil }
-            let folderComponents = URL(fileURLWithPath: rule.path).standardizedFileURL.pathComponents
+            let folderComponents = FilePathSupport.userFacingURL(URL(fileURLWithPath: rule.path)).standardizedFileURL.pathComponents
             guard itemComponents.count >= folderComponents.count,
                   Array(itemComponents.prefix(folderComponents.count)) == folderComponents else { return nil }
             return (rule.priority.rank, index)
@@ -599,16 +603,20 @@ enum FullDiskAccessSupport {
             library.appendingPathComponent("Safari", isDirectory: true)
         ]
 
+        var readableCount = 0
+        var deniedCount = 0
         for folder in protectedFolders {
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
             do {
                 _ = try fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-                return .granted
+                readableCount += 1
             } catch {
-                if isPermissionDenied(error) { return .denied }
+                if isPermissionDenied(error) { deniedCount += 1 }
             }
         }
+        if readableCount > 0, deniedCount == 0 { return .granted }
+        if deniedCount > 0, readableCount == 0 { return .denied }
         return .unknown
     }
 

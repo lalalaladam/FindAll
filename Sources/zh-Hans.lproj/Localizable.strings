@@ -16,9 +16,9 @@
 "Starts With" = "开头";
 "Exact" = "精确";
 "Name matching" = "名称匹配";
-"Matches file names that contain the entered text." = "文件名包含输入内容。";
-"Matches file names that start with the entered text." = "文件名以输入内容开头。";
-"Matches the complete file name." = "完整文件名与输入内容一致。";
+"Matches file names that contain the entered text" = "文件名包含输入内容";
+"Matches file names that start with the entered text" = "文件名以输入内容开头";
+"Matches the complete file name" = "完整文件名与输入内容一致";
 "Automatic sizing expands Path first and Name second. Manual sizing keeps your column widths and uses horizontal scrolling when needed." = "自动调整时会优先伸缩“路径”列，其次是“名称”列；手动调整会保留列宽，并在需要时使用横向滚动。";
 "Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Fixed widths use horizontal scrolling when needed." = "自动适应模式仍可调整列宽，其他列会自动补偿以避免横向滚动；名称和修改时间最后压缩，路径最先压缩。固定列宽模式会在需要时使用横向滚动。";
 "Available in Any Application" = "在任何应用中均可用";
@@ -46,6 +46,7 @@
 "Ordering:" = "结果排序：";
 "Documents" = "文档";
 "Edit" = "编辑";
+"External Drives" = "外接磁盘";
 "Every button shows its saved shortcut. Click one and press a new combination; modifiers are shown live. Click elsewhere or press Escape to cancel." = "每个按钮都会显示已保存的快捷键。点击按钮后按下新的组合键，修饰键会实时显示；点击其他位置或按 Escape 可取消。";
 "Click a result-table header to choose the ordering. Folder priority and folders-first are independent options." = "点击结果表头选择排序方式；目录优先级和文件夹置顶是两个独立选项。";
 "Smart ordering puts common documents first. Clicking a result-table header switches to strict column ordering. Folder priority and folders-first remain independent." = "智能排序会将常用文档提前；点击结果表头后切换为严格的列排序。目录优先级和文件夹置顶仍作为独立选项。";
@@ -66,8 +67,8 @@
 "Full Disk Access is not available." = "尚未获得完全磁盘访问权限。";
 "Full Disk Access Required" = "需要完全磁盘访问";
 "Full Disk Access Recommended" = "建议授予完全磁盘访问";
-"Full Disk Access lets FindAll include more protected locations in Spotlight results. Enable it in System Settings, then restart the app." = "完全磁盘访问可让 FindAll 在 Spotlight 结果中包含更多受保护位置。请在系统设置中启用，然后重新启动应用。";
-"FindAll can search ordinary indexed locations without Full Disk Access. Enable it to include more protected locations, then restart the app." = "即使没有完全磁盘访问，FindAll 也能搜索普通的已索引位置。启用此权限可包含更多受保护位置，然后请重新启动应用。";
+"Full Disk Access lets FindAll include more protected locations in Spotlight results. You can manage it in System Settings." = "完全磁盘访问可让 FindAll 在 Spotlight 结果中包含更多受保护位置。你可以在系统设置中管理此权限。";
+"FindAll can search ordinary indexed locations without Full Disk Access, but protected-location results may be incomplete." = "即使没有完全磁盘访问，FindAll 也能搜索普通位置，但受保护位置的结果可能不完整。";
 "Full Disk Access is required for Spotlight searches. Without it, searches return no results. Enable FindAll in System Settings, then restart the app." = "Spotlight 搜索需要完全磁盘访问权限；未授权时搜索会返回空结果。请在系统设置中启用 FindAll，然后重新启动应用。";
 "FindAll needs Full Disk Access for Spotlight searches. Without it, searches return no results. Add FindAll in System Settings, enable it, then restart the app." = "FindAll 需要完全磁盘访问权限才能进行 Spotlight 搜索；未授权时搜索会返回空结果。请在系统设置中添加并启用 FindAll，然后重新启动应用。";
 "Global" = "全局";
@@ -96,6 +97,7 @@
 "Name" = "名称";
 "No matching Spotlight results" = "没有匹配的 Spotlight 结果";
 "No Applications Available" = "没有可用的应用程序";
+"No External Drives Detected" = "未检测到外接磁盘";
 "No results. Without Full Disk Access, Spotlight searches return empty results." = "没有结果。未授予完全磁盘访问权限时，Spotlight 搜索会返回空结果。";
 "No matching Spotlight results. Protected locations may require Full Disk Access." = "没有匹配的 Spotlight 结果。受保护位置可能需要完全磁盘访问权限。";
 "Normal" = "普通";

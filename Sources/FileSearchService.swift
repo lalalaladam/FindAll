@@ -1,6 +1,46 @@
 import CoreServices
 import Foundation
 
+enum FilePathSupport {
+    private static let dataVolumeMappings: [(physical: String, logical: String)] = [
+        ("/System/Volumes/Data/System/Library/PreinstalledAssetsV2", "/System/Library/PreinstalledAssetsV2"),
+        ("/System/Volumes/Data/System/Library/PreinstalledAssets", "/System/Library/PreinstalledAssets"),
+        ("/System/Volumes/Data/System/Library/CoreServices/CoreTypes.bundle/Contents/Library", "/System/Library/CoreServices/CoreTypes.bundle/Contents/Library"),
+        ("/System/Volumes/Data/System/Library/AssetsV2", "/System/Library/AssetsV2"),
+        ("/System/Volumes/Data/System/Library/Assets", "/System/Library/Assets"),
+        ("/System/Volumes/Data/System/Library/Caches", "/System/Library/Caches"),
+        ("/System/Volumes/Data/System/Library/Speech", "/System/Library/Speech"),
+        ("/System/Volumes/Data/usr/libexec/cups", "/usr/libexec/cups"),
+        ("/System/Volumes/Data/usr/share/snmp", "/usr/share/snmp"),
+        ("/System/Volumes/Data/AppleInternal", "/AppleInternal"),
+        ("/System/Volumes/Data/Applications", "/Applications"),
+        ("/System/Volumes/Data/usr/local", "/usr/local"),
+        ("/System/Volumes/Data/Library", "/Library"),
+        ("/System/Volumes/Data/Users", "/Users"),
+        ("/System/Volumes/Data/Volumes", "/Volumes"),
+        ("/System/Volumes/Data/private", "/private"),
+        ("/System/Volumes/Data/cores", "/cores"),
+        ("/System/Volumes/Data/opt", "/opt"),
+        ("/System/Volumes/Data/pkg", "/pkg")
+    ]
+
+    static func userFacingPath(_ path: String) -> String {
+        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        for mapping in dataVolumeMappings {
+            if standardizedPath == mapping.physical { return mapping.logical }
+            let prefix = mapping.physical + "/"
+            if standardizedPath.hasPrefix(prefix) {
+                return mapping.logical + standardizedPath.dropFirst(mapping.physical.count)
+            }
+        }
+        return standardizedPath
+    }
+
+    static func userFacingURL(_ url: URL) -> URL {
+        URL(fileURLWithPath: userFacingPath(url.path))
+    }
+}
+
 struct SearchResult: Hashable {
     let url: URL
     let displayName: String
@@ -197,11 +237,12 @@ final class FileSearchService {
 
     private static func makeResults(from query: MDQuery, count: Int) -> [SearchResult] {
         var results: [SearchResult] = []
+        var seenURLs = Set<URL>()
         results.reserveCapacity(count)
         for index in 0..<count {
             guard let rawResult = MDQueryGetResultAtIndex(query, index) else { continue }
             let item = unsafeBitCast(rawResult, to: MDItem.self)
-            if let result = makeResult(item) {
+            if let result = makeResult(item), seenURLs.insert(result.url.standardizedFileURL).inserted {
                 results.append(result)
             }
         }
@@ -220,7 +261,7 @@ final class FileSearchService {
         ]
         guard let attributes = MDItemCopyAttributes(item, names) as? [String: Any],
               let path = attributes[kMDItemPath as String] as? String else { return nil }
-        let url = URL(fileURLWithPath: path)
+        let url = FilePathSupport.userFacingURL(URL(fileURLWithPath: path))
         let displayName = attributes[kMDItemDisplayName as String] as? String
             ?? attributes[kMDItemFSName as String] as? String
             ?? url.lastPathComponent

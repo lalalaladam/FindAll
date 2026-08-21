@@ -265,6 +265,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private let rulesTableView = NSTableView()
     private var folderRules: [FolderRule] = []
     private var windowPreferencesObserver: NSObjectProtocol?
+    private var applicationActivationObserver: NSObjectProtocol?
     private var isWindowSettingsRefreshScheduled = false
     private let centerPlacementButton = NSButton(radioButtonWithTitle: WindowPlacement.center.title, target: nil, action: nil)
     private let rememberPlacementButton = NSButton(radioButtonWithTitle: WindowPlacement.remember.title, target: nil, action: nil)
@@ -297,12 +298,21 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         ) { [weak self] _ in
             self?.scheduleWindowSettingsRefresh()
         }
+        applicationActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard self?.window?.isVisible == true else { return }
+            self?.refreshFullDiskAccessStatus()
+        }
     }
 
     required init?(coder: NSCoder) { nil }
 
     deinit {
         if let windowPreferencesObserver { NotificationCenter.default.removeObserver(windowPreferencesObserver) }
+        if let applicationActivationObserver { NotificationCenter.default.removeObserver(applicationActivationObserver) }
     }
 
     private func buildInterface() {
@@ -338,7 +348,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         let view = NSView()
         let accessHeading = NSTextField(labelWithString: L10n.string("Full Disk Access"))
         accessHeading.font = .boldSystemFont(ofSize: 14)
-        let accessHelp = NSTextField(wrappingLabelWithString: L10n.string("Full Disk Access lets FindAll include more protected locations in Spotlight results. Enable it in System Settings, then restart the app."))
+        let accessHelp = NSTextField(wrappingLabelWithString: L10n.string("Full Disk Access lets FindAll include more protected locations in Spotlight results. You can manage it in System Settings."))
         accessHelp.textColor = .secondaryLabelColor
         fullDiskAccessStatusLabel.font = .systemFont(ofSize: 12, weight: .medium)
 

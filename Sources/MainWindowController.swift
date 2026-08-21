@@ -29,6 +29,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var resetColumnLayoutObserver: NSObjectProtocol?
     private var resetWindowSizeObserver: NSObjectProtocol?
     private var scrollerStyleObserver: NSObjectProtocol?
+    private var volumeObservers: [NSObjectProtocol] = []
     private var sharingServicePicker: NSSharingServicePicker?
     private var isAdjustingColumns = false
     private var hasRestoredFittedColumnLayout = false
@@ -38,7 +39,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var activeSortMode = SearchPreferences.sortMode
     private var observedDefaultSortMode = SearchPreferences.sortMode
 
-    private static let fullDiskAccessNoticeKey = "privacy.fullDiskAccessNoticeShown.v1"
+    private static let fullDiskAccessNoticeKey = "privacy.fullDiskAccessNoticeShown.v2"
     private static let defaultColumnOrder = ["name", "path", "kind", "size", "modified"]
     private static let defaultColumnWidths: [String: CGFloat] = [
         "name": 260,
@@ -100,6 +101,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         ) { [weak self] _ in
             self?.layoutColumns()
         }
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        volumeObservers = [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification].map { name in
+            workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.scheduleFilterControlsRefresh()
+            }
+        }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -110,9 +117,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         if let resetColumnLayoutObserver { NotificationCenter.default.removeObserver(resetColumnLayoutObserver) }
         if let resetWindowSizeObserver { NotificationCenter.default.removeObserver(resetWindowSizeObserver) }
         if let scrollerStyleObserver { NotificationCenter.default.removeObserver(scrollerStyleObserver) }
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        volumeObservers.forEach(workspaceCenter.removeObserver)
     }
 
     func showAndFocusSearch() {
+        refreshFilterControls()
         if window?.isVisible == false { positionWindowForPresentation() }
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
@@ -287,7 +297,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         allItem.state = selectedScope == nil ? .on : .off
         scopePopup.menu?.addItem(allItem)
 
-        if let selectedScope, !savedPaths.contains(selectedScope) {
+        let externalVolumes = externalVolumeURLs()
+        let externalPaths = externalVolumes.map(\.path)
+        let externalItem = NSMenuItem(title: L10n.string("External Drives"), action: nil, keyEquivalent: "")
+        let externalMenu = NSMenu(title: L10n.string("External Drives"))
+        if externalVolumes.isEmpty {
+            let unavailable = externalMenu.addItem(withTitle: L10n.string("No External Drives Detected"), action: nil, keyEquivalent: "")
+            unavailable.isEnabled = false
+        } else {
+            for volumeURL in externalVolumes {
+                let item = NSMenuItem(
+                    title: FileManager.default.displayName(atPath: volumeURL.path),
+                    action: #selector(scopeMenuItemSelected(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.toolTip = volumeURL.path
+                item.representedObject = volumeURL.path
+                item.state = volumeURL.path == selectedScope ? .on : .off
+                externalMenu.addItem(item)
+            }
+        }
+        externalItem.submenu = externalMenu
+        scopePopup.menu?.addItem(externalItem)
+
+        if let selectedScope, !savedPaths.contains(selectedScope), !externalPaths.contains(selectedScope) {
             scopePopup.menu?.addItem(.separator())
             let heading = NSMenuItem(title: L10n.string("Temporary Scope"), action: nil, keyEquivalent: "")
             heading.isEnabled = false
@@ -343,6 +377,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let duplicates = paths.filter { URL(fileURLWithPath: $0).lastPathComponent == name }
         guard duplicates.count > 1 else { return name }
         return "\(name) — \(url.deletingLastPathComponent().lastPathComponent)"
+    }
+
+    private func externalVolumeURLs() -> [URL] {
+        let keys: [URLResourceKey] = [.volumeIsBrowsableKey, .volumeIsInternalKey, .volumeIsLocalKey, .volumeNameKey]
+        let volumes = FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: keys,
+            options: [.skipHiddenVolumes]
+        ) ?? []
+        return volumes.compactMap { volumeURL in
+            guard let values = try? volumeURL.resourceValues(forKeys: Set(keys)),
+                  values.volumeIsBrowsable != false,
+                  values.volumeIsInternal == false,
+                  values.volumeIsLocal != false else { return nil }
+            return FilePathSupport.userFacingURL(volumeURL).standardizedFileURL
+        }
+        .sorted {
+            FileManager.default.displayName(atPath: $0.path)
+                .localizedStandardCompare(FileManager.default.displayName(atPath: $1.path)) == .orderedAscending
+        }
     }
 
     private func configureTable() {
@@ -1402,7 +1455,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func showFullDiskAccessNoticeIfNeeded() {
-        guard FullDiskAccessSupport.currentStatus() != .granted,
+        guard FullDiskAccessSupport.currentStatus() == .denied,
               !UserDefaults.standard.bool(forKey: Self.fullDiskAccessNoticeKey),
               let window else { return }
         UserDefaults.standard.set(true, forKey: Self.fullDiskAccessNoticeKey)
@@ -1411,7 +1464,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             let alert = NSAlert()
             alert.alertStyle = .informational
             alert.messageText = L10n.string("Full Disk Access Recommended")
-            alert.informativeText = L10n.string("FindAll can search ordinary indexed locations without Full Disk Access. Enable it to include more protected locations, then restart the app.")
+            alert.informativeText = L10n.string("FindAll can search ordinary indexed locations without Full Disk Access, but protected-location results may be incomplete.")
             alert.addButton(withTitle: L10n.string("Open System Settings"))
             alert.addButton(withTitle: L10n.string("Later"))
             alert.beginSheetModal(for: window) { response in
