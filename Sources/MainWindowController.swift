@@ -337,10 +337,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         tableView.onQuickLook = { [weak self] in self?.toggleQuickLook(nil) }
         tableView.onOpen = { [weak self] in self?.openSelection(nil) }
         tableView.onReveal = { [weak self] in self?.revealSelection(nil) }
+        tableView.onShare = { [weak self] in self?.shareSelection(nil) }
+        tableView.onGetInfo = { [weak self] in self?.showFinderInfo(nil) }
         tableView.onCopyPath = { [weak self] in self?.copyPath(nil) }
         tableView.onCopyFiles = { [weak self] in self?.copySelection(nil) }
         tableView.setDraggingSourceOperationMask(.copy, forLocal: true)
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
+
+        let fittedHeaderView = FittedTableHeaderView()
+        fittedHeaderView.usesFittedResizing = { WindowPreferences.columnSizingMode == .fitWindow }
+        fittedHeaderView.onResizeWillBegin = { [weak self] in self?.isAdjustingColumns = true }
+        fittedHeaderView.onResize = { [weak self] dividerIndex, initialWidths, delta in
+            self?.resizeFittedColumns(at: dividerIndex, initialWidths: initialWidths, delta: delta)
+        }
+        fittedHeaderView.onResizeDidEnd = { [weak self] in
+            guard let self else { return }
+            self.isAdjustingColumns = false
+            self.saveColumnWidths(forKey: WindowPreferences.automaticColumnWidthsKey)
+        }
+        tableView.headerView = fittedHeaderView
 
         addColumn("name", title: String(localized: "Name"), width: 260, minimum: 140)
         addColumn("path", title: String(localized: "Path"), width: 360, minimum: 190)
@@ -367,13 +382,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         reveal.identifier = NSUserInterfaceItemIdentifier("command.reveal")
         reveal.target = self
         menu.addItem(.separator())
-        let info = menu.addItem(withTitle: String(localized: "Get Info"), action: #selector(showFinderInfo(_:)), keyEquivalent: "i")
+        let info = menu.addItem(withTitle: String(localized: "Get Info"), action: #selector(showFinderInfo(_:)), keyEquivalent: "")
+        info.identifier = NSUserInterfaceItemIdentifier("command.getInfo")
         info.target = self
         let share = menu.addItem(withTitle: String(localized: "Share"), action: #selector(shareSelection(_:)), keyEquivalent: "")
-        share.identifier = NSUserInterfaceItemIdentifier("context.share")
+        share.identifier = NSUserInterfaceItemIdentifier("command.share")
         share.target = self
         menu.addItem(.separator())
         let copyFiles = menu.addItem(withTitle: String(localized: "Copy Files"), action: #selector(copySelection(_:)), keyEquivalent: "")
+        copyFiles.identifier = NSUserInterfaceItemIdentifier("command.copyFiles")
         copyFiles.target = self
         let copyPath = menu.addItem(withTitle: String(localized: "Copy Path"), action: #selector(copyPath(_:)), keyEquivalent: "")
         copyPath.identifier = NSUserInterfaceItemIdentifier("command.copyPath")
@@ -483,6 +500,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         return actualReduction - max(0, remainingReduction)
     }
 
+    private func resizeFittedColumns(at dividerIndex: Int, initialWidths: [CGFloat], delta: CGFloat) {
+        let columns = tableView.tableColumns
+        guard columns.indices.contains(dividerIndex),
+              columns.indices.contains(dividerIndex + 1),
+              initialWidths.count == columns.count else { return }
+
+        var widths = initialWidths
+        if delta >= 0 {
+            let capacity = columns.indices.dropFirst(dividerIndex + 1).reduce(CGFloat.zero) { result, index in
+                result + max(0, initialWidths[index] - columns[index].minWidth)
+            }
+            let adjustment = min(delta, capacity)
+            widths[dividerIndex] = initialWidths[dividerIndex] + adjustment
+            var remaining = adjustment
+            for index in columns.indices.dropFirst(dividerIndex + 1) where remaining > 0.5 {
+                let reduction = min(remaining, max(0, initialWidths[index] - columns[index].minWidth))
+                widths[index] = initialWidths[index] - reduction
+                remaining -= reduction
+            }
+        } else {
+            let adjustment = min(-delta, max(0, initialWidths[dividerIndex] - columns[dividerIndex].minWidth))
+            widths[dividerIndex] = initialWidths[dividerIndex] - adjustment
+            widths[dividerIndex + 1] = initialWidths[dividerIndex + 1] + adjustment
+        }
+
+        for (column, width) in zip(columns, widths) {
+            column.width = width
+        }
+        tableView.needsDisplay = true
+        tableView.headerView?.needsDisplay = true
+    }
+
     private func restoreColumnWidths(forKey key: String) {
         guard let widths = UserDefaults.standard.dictionary(forKey: key) as? [String: Double] else { return }
         for column in tableView.tableColumns {
@@ -569,7 +618,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     func refreshContextMenuShortcuts() {
         guard let menu = tableView.menu else { return }
-        for command in [CommandID.open, .quickLook, .reveal, .copyPath] {
+        for command in CommandID.resultListCommands {
             let identifier = NSUserInterfaceItemIdentifier("command.\(command.rawValue)")
             guard let item = menu.items.first(where: { $0.identifier == identifier }) else { continue }
             let shortcut = ShortcutSettings.shortcut(for: command)
@@ -998,7 +1047,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         )
     }
 
-    @objc private func showFinderInfo(_ sender: Any?) {
+    @objc func showFinderInfo(_ sender: Any?) {
         guard !selectedURLs.isEmpty else { return }
         let paths = selectedURLs.map { "\"\(Self.escapeAppleScriptString($0.path))\"" }.joined(separator: ", ")
         let source = """
@@ -1021,7 +1070,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         }
     }
 
-    @objc private func shareSelection(_ sender: Any?) {
+    @objc func shareSelection(_ sender: Any?) {
         let urls = selectedURLs
         guard !urls.isEmpty else { return }
         let picker = NSSharingServicePicker(items: urls)
@@ -1034,7 +1083,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         } else {
             fallbackPoint = NSPoint(x: visibleRect.midX, y: visibleRect.midY)
         }
-        let requestedPoint = tableView.contextMenuAnchorPoint ?? fallbackPoint
+        let requestedPoint = sender is NSMenuItem
+            ? tableView.contextMenuAnchorPoint ?? fallbackPoint
+            : fallbackPoint
         let anchorPoint = NSPoint(
             x: min(max(requestedPoint.x, visibleRect.minX + 8), visibleRect.maxX - 8),
             y: min(max(requestedPoint.y, visibleRect.minY + 8), visibleRect.maxY - 8)
@@ -1263,6 +1314,8 @@ private final class ActionTableView: NSTableView {
     var onQuickLook: (() -> Void)?
     var onOpen: (() -> Void)?
     var onReveal: (() -> Void)?
+    var onShare: (() -> Void)?
+    var onGetInfo: (() -> Void)?
     var onCopyPath: (() -> Void)?
     var onCopyFiles: (() -> Void)?
     private(set) var contextMenuAnchorPoint: NSPoint?
@@ -1284,12 +1337,64 @@ private final class ActionTableView: NSTableView {
             onQuickLook?()
         } else if ShortcutSettings.shortcut(for: .reveal).matches(event) {
             onReveal?()
+        } else if ShortcutSettings.shortcut(for: .copyFiles).matches(event) {
+            onCopyFiles?()
         } else if ShortcutSettings.shortcut(for: .copyPath).matches(event) {
             onCopyPath?()
+        } else if ShortcutSettings.shortcut(for: .share).matches(event) {
+            onShare?()
+        } else if ShortcutSettings.shortcut(for: .getInfo).matches(event) {
+            onGetInfo?()
         } else {
             super.keyDown(with: event)
         }
     }
 
     @objc func copy(_ sender: Any?) { onCopyFiles?() }
+}
+
+private final class FittedTableHeaderView: NSTableHeaderView {
+    var usesFittedResizing: (() -> Bool)?
+    var onResizeWillBegin: (() -> Void)?
+    var onResize: ((Int, [CGFloat], CGFloat) -> Void)?
+    var onResizeDidEnd: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        guard usesFittedResizing?() == true,
+              let tableView,
+              let dividerIndex = dividerIndex(at: convert(event.locationInWindow, from: nil)) else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        // The trailing table edge is fixed in fitted mode. Inner dividers exchange
+        // width with the columns to their right while the pointer is tracking.
+        guard dividerIndex + 1 < tableView.tableColumns.count else { return }
+        let initialX = convert(event.locationInWindow, from: nil).x
+        let initialWidths = tableView.tableColumns.map(\.width)
+        onResizeWillBegin?()
+        defer { onResizeDidEnd?() }
+
+        while let nextEvent = window?.nextEvent(
+            matching: [.leftMouseDragged, .leftMouseUp],
+            until: .distantFuture,
+            inMode: .eventTracking,
+            dequeue: true
+        ) {
+            if nextEvent.type == .leftMouseUp { break }
+            let currentX = convert(nextEvent.locationInWindow, from: nil).x
+            onResize?(dividerIndex, initialWidths, currentX - initialX)
+        }
+    }
+
+    private func dividerIndex(at point: NSPoint) -> Int? {
+        guard let tableView else { return nil }
+        let tolerance: CGFloat = 5
+        return tableView.tableColumns.indices.min { lhs, rhs in
+            abs(tableView.rect(ofColumn: lhs).maxX - point.x)
+                < abs(tableView.rect(ofColumn: rhs).maxX - point.x)
+        }.flatMap { index in
+            abs(tableView.rect(ofColumn: index).maxX - point.x) <= tolerance ? index : nil
+        }
+    }
 }

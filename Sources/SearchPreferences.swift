@@ -320,13 +320,15 @@ enum FileManagerSupport {
     static func reveal(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         guard let applicationURL = selectedFileManagerURL else {
-            NSWorkspace.shared.activateFileViewerSelecting(urls)
+            revealInFinder(urls)
             return
         }
         if isFinder(applicationURL) {
-            NSWorkspace.shared.activateFileViewerSelecting(urls)
+            revealInFinder(urls)
         } else if isQSpace(applicationURL), systemFileViewerIsQSpace {
             NSWorkspace.shared.activateFileViewerSelecting(urls)
+        } else if isQSpace(applicationURL), revealInQSpace(urls) {
+            return
         } else {
             open(parentURLs(for: urls), with: applicationURL, workspace: .shared)
         }
@@ -334,7 +336,7 @@ enum FileManagerSupport {
 
     static var canSelectRevealedItem: Bool {
         guard let applicationURL = selectedFileManagerURL else { return true }
-        return isFinder(applicationURL) || (isQSpace(applicationURL) && systemFileViewerIsQSpace)
+        return isFinder(applicationURL) || isQSpace(applicationURL)
     }
 
     private static var finderURL: URL {
@@ -372,6 +374,27 @@ enum FileManagerSupport {
             let parent = $0.deletingLastPathComponent().standardizedFileURL
             return seen.insert(parent).inserted ? parent : nil
         }
+    }
+
+    private static func revealInFinder(_ urls: [URL]) {
+        let workspace = NSWorkspace.shared
+        if urls.count == 1, let url = urls.first {
+            let parentPath = url.deletingLastPathComponent().standardizedFileURL.path
+            if workspace.selectFile(url.standardizedFileURL.path, inFileViewerRootedAtPath: parentPath) {
+                return
+            }
+        }
+        workspace.activateFileViewerSelecting(urls)
+    }
+
+    private static func revealInQSpace(_ urls: [URL]) -> Bool {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("FindAllQSpaceReveal"))
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects(urls.map { $0 as NSURL }) else { return false }
+        for serviceName in ["QSpace/Reveal", "Reveal in QSpace Pro", "Reveal in QSpace"] {
+            if NSPerformService(serviceName, pasteboard) { return true }
+        }
+        return false
     }
 
     private static func open(_ urls: [URL], with applicationURL: URL, workspace: NSWorkspace) {

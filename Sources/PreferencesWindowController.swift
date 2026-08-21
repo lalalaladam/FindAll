@@ -6,7 +6,14 @@ enum CommandID: String, CaseIterable {
     case open
     case quickLook
     case reveal
+    case copyFiles
     case copyPath
+    case share
+    case getInfo
+
+    static let resultListCommands: [CommandID] = [
+        .open, .quickLook, .reveal, .copyFiles, .copyPath, .share, .getInfo
+    ]
 
     var title: String {
         switch self {
@@ -14,7 +21,10 @@ enum CommandID: String, CaseIterable {
         case .open: return String(localized: "Open selected items")
         case .quickLook: return String(localized: "Quick Look")
         case .reveal: return String(localized: "Show in File Manager")
+        case .copyFiles: return String(localized: "Copy Files")
         case .copyPath: return String(localized: "Copy full paths")
+        case .share: return String(localized: "Share")
+        case .getInfo: return String(localized: "Get Info")
         }
     }
 
@@ -90,7 +100,10 @@ enum ShortcutSettings {
         .open: KeyboardShortcut(keyCode: 36, modifiersRawValue: 0, characters: "\r"),
         .quickLook: KeyboardShortcut(keyCode: 49, modifiersRawValue: 0, characters: " "),
         .reveal: KeyboardShortcut(keyCode: 36, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "\r"),
-        .copyPath: KeyboardShortcut(keyCode: 8, modifiersRawValue: NSEvent.ModifierFlags.command.union(.shift).rawValue, characters: "c")
+        .copyFiles: KeyboardShortcut(keyCode: 8, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "c"),
+        .copyPath: KeyboardShortcut(keyCode: 8, modifiersRawValue: NSEvent.ModifierFlags.command.union(.shift).rawValue, characters: "c"),
+        .share: KeyboardShortcut(keyCode: 1, modifiersRawValue: NSEvent.ModifierFlags.command.union(.option).union(.control).rawValue, characters: "s"),
+        .getInfo: KeyboardShortcut(keyCode: 34, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "i")
     ]
 
     static func shortcut(for command: CommandID) -> KeyboardShortcut {
@@ -252,6 +265,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private let rulesTableView = NSTableView()
     private var folderRules: [FolderRule] = []
     private var windowPreferencesObserver: NSObjectProtocol?
+    private var isWindowSettingsRefreshScheduled = false
     private let placementPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let startupSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let columnSizingPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -279,7 +293,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.refreshWindowSettings()
+            self?.scheduleWindowSettingsRefresh()
         }
     }
 
@@ -453,7 +467,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
         let fileManagerHeading = NSTextField(labelWithString: String(localized: "File Manager"))
         fileManagerHeading.font = .boldSystemFont(ofSize: 17)
-        let fileManagerHelp = NSTextField(wrappingLabelWithString: String(localized: "Double-clicking a folder opens it in the selected file manager. Showing an item selects it in Finder or QSpace when QSpace is the system file viewer; unsupported file managers open the parent folder."))
+        let fileManagerHelp = NSTextField(wrappingLabelWithString: String(localized: "Double-clicking a folder opens it in the selected file manager. Showing an item opens its parent and selects it in Finder or QSpace; unsupported file managers open the parent folder."))
         fileManagerHelp.textColor = .secondaryLabelColor
         let fileManagerLabel = NSTextField(labelWithString: String(localized: "Default file manager:"))
         fileManagerPopup.target = self
@@ -541,7 +555,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         resultsHeading.font = .boldSystemFont(ofSize: 14)
         let resultsHelp = NSTextField(wrappingLabelWithString: String(localized: "These shortcuts work only when the result list has keyboard focus and an item is selected."))
         resultsHelp.textColor = .secondaryLabelColor
-        let resultRows = makeShortcutRows(commands: [.open, .quickLook, .reveal, .copyPath])
+        let resultRows = makeShortcutRows(commands: CommandID.resultListCommands)
 
         shortcutMessageLabel.textColor = .systemRed
         shortcutMessageLabel.lineBreakMode = .byTruncatingTail
@@ -682,6 +696,16 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         choose.representedObject = "__choose__"
         fileManagerPopup.menu?.addItem(choose)
         selectItem(in: fileManagerPopup, representedObject: WindowPreferences.fileManagerChoice.rawValue)
+    }
+
+    private func scheduleWindowSettingsRefresh() {
+        guard !isWindowSettingsRefreshScheduled else { return }
+        isWindowSettingsRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isWindowSettingsRefreshScheduled = false
+            self.refreshWindowSettings()
+        }
     }
 
     private func selectItem(in popup: NSPopUpButton, representedObject: String) {
@@ -860,7 +884,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             NSSound.beep()
             return
         }
-        if isReservedMacShortcut(shortcut) {
+        if isReservedMacShortcut(shortcut, for: command) {
             showShortcutMessage(String(localized: "That shortcut is reserved by a standard macOS command."))
             refreshButtons()
             NSSound.beep()
@@ -885,8 +909,9 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         onShortcutChange()
     }
 
-    private func isReservedMacShortcut(_ shortcut: KeyboardShortcut) -> Bool {
+    private func isReservedMacShortcut(_ shortcut: KeyboardShortcut, for command: CommandID) -> Bool {
         guard shortcut.modifiers == .command else { return false }
+        if command == .copyFiles, shortcut.characters.lowercased() == "c" { return false }
         return ["a", "c", "h", "m", "q", "v", "w", "x", "z", ","].contains(shortcut.characters.lowercased())
     }
 
