@@ -25,6 +25,7 @@
 "Bring All to Front" = "全部置于顶层";
 "Build Time: %@" = "构建时间：%@";
 "Build: %@" = "构建号：%@";
+"Cancel" = "取消";
 "Choose Folder…" = "选择文件夹…";
 "Choose" = "选择";
 "Choose Other Application…" = "选择其他应用程序…";
@@ -39,6 +40,7 @@
 "At app launch:" = "应用启动时：";
 "Current shortcut: %@" = "当前快捷键：%@";
 "Could Not Show Info" = "无法显示简介";
+"Could Not Restart FindAll" = "无法重新启动 FindAll";
 "Cut" = "剪切";
 "Default ordering:" = "默认排序：";
 "Ordering:" = "结果排序：";
@@ -72,6 +74,8 @@
 "Hide FindAll" = "隐藏 FindAll";
 "Hide Others" = "隐藏其他";
 "Images" = "图片";
+"Language" = "语言";
+"Application language:" = "应用语言：";
 "Keep folders above files within the same priority" = "同一优先级内文件夹置顶";
 "Keep on top in current Space" = "当前 Space 置顶";
 "Keep manually adjusted widths" = "保留手动调整的列宽";
@@ -97,6 +101,7 @@
 "Normal" = "普通";
 "Open selected items" = "打开所选项目";
 "Open" = "打开";
+"OK" = "好";
 "Open Containing Folder" = "打开所在文件夹";
 "Open With" = "打开方式";
 "Open System Settings" = "打开系统设置";
@@ -115,6 +120,7 @@
 "Quit FindAll" = "退出 FindAll";
 "Recording shortcut…" = "正在录制快捷键…";
 "Redo" = "重做";
+"Restart and Apply" = "重新启动并应用";
 "Remove" = "移除";
 "Reset" = "重置";
 "Restore All Defaults" = "恢复全部默认值";
@@ -165,6 +171,9 @@
 "The global shortcut could not be registered because the application is not ready." = "应用程序尚未准备完成，无法注册全局快捷键。";
 "The global shortcut could not be registered (error %lld). It may already be used by macOS or another application." = "无法注册全局快捷键（错误 %lld），它可能已被 macOS 或其他应用程序占用。";
 "The global shortcut must include Command, Option, Control, or Shift." = "全局快捷键必须包含 Command、Option、Control 或 Shift。";
+"Change Language?" = "切换语言？";
+"FindAll needs to restart to use %@." = "FindAll 需要重新启动以使用%@。";
+"The language change will apply the next time you open FindAll." = "语言更改将在下次打开 FindAll 时生效。";
 "Type a query and press Return" = "输入关键词并按 Return";
 "Type a query to search" = "输入关键词并按 Return 搜索";
 "Type:" = "类型：";

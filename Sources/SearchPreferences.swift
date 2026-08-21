@@ -17,18 +17,18 @@ enum SearchCategory: String, CaseIterable, Codable {
 
     var title: String {
         switch self {
-        case .all: return String(localized: "All")
-        case .folder: return String(localized: "Folders")
-        case .application: return String(localized: "Applications")
-        case .video: return String(localized: "Videos")
-        case .audio: return String(localized: "Audio")
-        case .image: return String(localized: "Images")
-        case .document: return String(localized: "Documents")
+        case .all: return L10n.string("All")
+        case .folder: return L10n.string("Folders")
+        case .application: return L10n.string("Applications")
+        case .video: return L10n.string("Videos")
+        case .audio: return L10n.string("Audio")
+        case .image: return L10n.string("Images")
+        case .document: return L10n.string("Documents")
         case .presentation: return "PPT"
         case .word: return "Word"
         case .excel: return "Excel"
         case .pdf: return "PDF"
-        case .archive: return String(localized: "Archives")
+        case .archive: return L10n.string("Archives")
         }
     }
 
@@ -130,20 +130,20 @@ enum SearchMatchMode: String, CaseIterable, Codable {
 
     var title: String {
         switch self {
-        case .contains: return String(localized: "Contains")
-        case .prefix: return String(localized: "Starts With")
-        case .exact: return String(localized: "Exact")
+        case .contains: return L10n.string("Contains")
+        case .prefix: return L10n.string("Starts With")
+        case .exact: return L10n.string("Exact")
         }
     }
 
     var toolTip: String {
         switch self {
         case .contains:
-            return String(localized: "Matches file names that contain the entered text.")
+            return L10n.string("Matches file names that contain the entered text.")
         case .prefix:
-            return String(localized: "Matches file names that start with the entered text.")
+            return L10n.string("Matches file names that start with the entered text.")
         case .exact:
-            return String(localized: "Matches the complete file name.")
+            return L10n.string("Matches the complete file name.")
         }
     }
 }
@@ -163,17 +163,17 @@ enum ResultSortMode: String, CaseIterable, Codable {
 
     var title: String {
         switch self {
-        case .smart: return String(localized: "Smart (Common Documents First)")
-        case .nameAscending: return String(localized: "Name (A–Z)")
-        case .nameDescending: return String(localized: "Name (Z–A)")
-        case .pathAscending: return String(localized: "Path (A–Z)")
-        case .pathDescending: return String(localized: "Path (Z–A)")
-        case .kindAscending: return String(localized: "Kind (A–Z)")
-        case .kindDescending: return String(localized: "Kind (Z–A)")
-        case .sizeDescending: return String(localized: "Size (Largest First)")
-        case .sizeAscending: return String(localized: "Size (Smallest First)")
-        case .modifiedDescending: return String(localized: "Modified (Newest First)")
-        case .modifiedAscending: return String(localized: "Modified (Oldest First)")
+        case .smart: return L10n.string("Smart (Common Documents First)")
+        case .nameAscending: return L10n.string("Name (A–Z)")
+        case .nameDescending: return L10n.string("Name (Z–A)")
+        case .pathAscending: return L10n.string("Path (A–Z)")
+        case .pathDescending: return L10n.string("Path (Z–A)")
+        case .kindAscending: return L10n.string("Kind (A–Z)")
+        case .kindDescending: return L10n.string("Kind (Z–A)")
+        case .sizeDescending: return L10n.string("Size (Largest First)")
+        case .sizeAscending: return L10n.string("Size (Smallest First)")
+        case .modifiedDescending: return L10n.string("Modified (Newest First)")
+        case .modifiedAscending: return L10n.string("Modified (Oldest First)")
         }
     }
 }
@@ -185,9 +185,9 @@ enum FolderPriority: Int, CaseIterable, Codable {
 
     var title: String {
         switch self {
-        case .normal: return String(localized: "Normal")
-        case .preferred: return String(localized: "Preferred")
-        case .pinned: return String(localized: "Pinned")
+        case .normal: return L10n.string("Normal")
+        case .preferred: return L10n.string("Preferred")
+        case .pinned: return L10n.string("Pinned")
         }
     }
 
@@ -211,8 +211,8 @@ enum WindowPlacement: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .center: return String(localized: "Center on the current display")
-        case .remember: return String(localized: "Restore the previous position")
+        case .center: return L10n.string("Center on the current display")
+        case .remember: return L10n.string("Restore the previous position")
         }
     }
 }
@@ -223,8 +223,8 @@ enum WindowStartupSize: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .previous: return String(localized: "Use the previous window size")
-        case .defaultSize: return String(localized: "Use the default window size")
+        case .previous: return L10n.string("Use the previous window size")
+        case .defaultSize: return L10n.string("Use the default window size")
         }
     }
 }
@@ -235,8 +235,8 @@ enum ColumnSizingMode: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .fitWindow: return String(localized: "Fit columns to window (No Horizontal Scrolling)")
-        case .manual: return String(localized: "Manual column widths (Scroll When Needed)")
+        case .fitWindow: return L10n.string("Fit columns to window (No Horizontal Scrolling)")
+        case .manual: return L10n.string("Manual column widths (Scroll When Needed)")
         }
     }
 }
@@ -272,7 +272,7 @@ enum WindowPreferences {
     }
 
     static var placement: WindowPlacement {
-        get { WindowPlacement(rawValue: UserDefaults.standard.string(forKey: Key.placement) ?? "") ?? .center }
+        get { WindowPlacement(rawValue: UserDefaults.standard.string(forKey: Key.placement) ?? "") ?? .remember }
         set { set(newValue.rawValue, forKey: Key.placement) }
     }
 

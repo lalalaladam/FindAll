@@ -28,43 +28,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = mainMenu
 
         let appMenu = addMenu(to: mainMenu, title: "FindAll")
-        let about = appMenu.addItem(withTitle: String(localized: "About FindAll"), action: #selector(showFindAllCustomAbout(_:)), keyEquivalent: "")
+        let about = appMenu.addItem(withTitle: L10n.string("About FindAll"), action: #selector(showFindAllCustomAbout(_:)), keyEquivalent: "")
         about.target = self
         appMenu.addItem(.separator())
-        let settings = appMenu.addItem(withTitle: String(localized: "Settings…"), action: #selector(showPreferences(_:)), keyEquivalent: ",")
+        let settings = appMenu.addItem(withTitle: L10n.string("Settings…"), action: #selector(showPreferences(_:)), keyEquivalent: ",")
         settings.target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: String(localized: "Hide FindAll"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        let hideOthers = appMenu.addItem(withTitle: String(localized: "Hide Others"), action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: L10n.string("Hide FindAll"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(withTitle: L10n.string("Hide Others"), action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthers.keyEquivalentModifierMask = [.command, .option]
-        appMenu.addItem(withTitle: String(localized: "Show All"), action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: L10n.string("Show All"), action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: String(localized: "Quit FindAll"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L10n.string("Quit FindAll"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
-        let fileMenu = addMenu(to: mainMenu, title: String(localized: "File"))
-        addCommandItem(to: fileMenu, title: String(localized: "Open"), command: .open, action: #selector(MainWindowController.openSelection(_:)))
-        addCommandItem(to: fileMenu, title: String(localized: "Show in File Manager"), command: .reveal, action: #selector(MainWindowController.revealSelection(_:)))
-        addCommandItem(to: fileMenu, title: String(localized: "Copy Path"), command: .copyPath, action: #selector(MainWindowController.copyPath(_:)))
+        let fileMenu = addMenu(to: mainMenu, title: L10n.string("File"))
+        addCommandItem(to: fileMenu, title: L10n.string("Open"), command: .open, action: #selector(MainWindowController.openSelection(_:)))
+        addCommandItem(to: fileMenu, title: L10n.string("Show in File Manager"), command: .reveal, action: #selector(MainWindowController.revealSelection(_:)))
+        addCommandItem(to: fileMenu, title: L10n.string("Copy Path"), command: .copyPath, action: #selector(MainWindowController.copyPath(_:)))
         fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: String(localized: "Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileMenu.addItem(withTitle: L10n.string("Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
 
-        let editMenu = addMenu(to: mainMenu, title: String(localized: "Edit"))
-        editMenu.addItem(withTitle: String(localized: "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
-        let redo = editMenu.addItem(withTitle: String(localized: "Redo"), action: Selector(("redo:")), keyEquivalent: "z")
+        let editMenu = addMenu(to: mainMenu, title: L10n.string("Edit"))
+        editMenu.addItem(withTitle: L10n.string("Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: L10n.string("Redo"), action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: String(localized: "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: String(localized: "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: String(localized: "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: String(localized: "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: L10n.string("Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: L10n.string("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: L10n.string("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: L10n.string("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
-        let windowMenu = addMenu(to: mainMenu, title: String(localized: "Window"))
-        windowMenu.addItem(withTitle: String(localized: "Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: String(localized: "Zoom"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        let windowMenu = addMenu(to: mainMenu, title: L10n.string("Window"))
+        windowMenu.addItem(withTitle: L10n.string("Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: L10n.string("Zoom"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
-        let show = windowMenu.addItem(withTitle: String(localized: "Show FindAll"), action: #selector(showMainWindow(_:)), keyEquivalent: "0")
+        let show = windowMenu.addItem(withTitle: L10n.string("Show FindAll"), action: #selector(showMainWindow(_:)), keyEquivalent: "0")
         show.target = self
-        windowMenu.addItem(withTitle: String(localized: "Bring All to Front"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        windowMenu.addItem(withTitle: L10n.string("Bring All to Front"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         NSApp.windowsMenu = windowMenu
     }
 
@@ -95,6 +95,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         mainWindowController.refreshContextMenuShortcuts()
         registerGlobalHotKey()
+    }
+
+    func relaunchApplication(onFailure: @escaping (Error) -> Void) {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { [weak self] _, error in
+            DispatchQueue.main.async {
+                if let error {
+                    self?.registerGlobalHotKey()
+                    onFailure(error)
+                } else {
+                    NSApp.terminate(nil)
+                }
+            }
+        }
     }
 
     @objc private func showMainWindow(_ sender: Any?) {

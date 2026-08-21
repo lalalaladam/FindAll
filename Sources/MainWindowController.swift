@@ -11,15 +11,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     )
     private let scopePopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let categoryPopup = NSPopUpButton(frame: .zero, pullsDown: true)
-    private let prioritizeFoldersButton = NSButton(checkboxWithTitle: String(localized: "Prioritize folder rules"), target: nil, action: nil)
-    private let foldersFirstButton = NSButton(checkboxWithTitle: String(localized: "Folders first"), target: nil, action: nil)
+    private let prioritizeFoldersButton = NSButton(checkboxWithTitle: L10n.string("Prioritize folder rules"), target: nil, action: nil)
+    private let foldersFirstButton = NSButton(checkboxWithTitle: L10n.string("Folders first"), target: nil, action: nil)
     private let settingsButton = NSButton()
     private let scrollView = NSScrollView()
     private let tableView = ActionTableView()
-    private let statusLabel = WindowDragTextField(labelWithString: String(localized: "Type a query and press Return"))
+    private let statusLabel = WindowDragTextField(labelWithString: L10n.string("Type a query and press Return"))
     private let spinner = NSProgressIndicator()
-    private let keepOnTopButton = NSButton(checkboxWithTitle: String(localized: "Keep on top in current Space"), target: nil, action: nil)
-    private let allSpacesButton = NSButton(checkboxWithTitle: String(localized: "Show on all Spaces"), target: nil, action: nil)
+    private let keepOnTopButton = NSButton(checkboxWithTitle: L10n.string("Keep on top in current Space"), target: nil, action: nil)
+    private let allSpacesButton = NSButton(checkboxWithTitle: L10n.string("Show on all Spaces"), target: nil, action: nil)
     private let searchService = FileSearchService()
     private var candidates: [SearchResult] = []
     private var results: [SearchResult] = []
@@ -122,7 +122,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     private func buildInterface() {
         guard let content = window?.contentView else { return }
-        searchField.placeholderString = String(localized: "Search files, folders, and applications")
+        searchField.placeholderString = L10n.string("Search files, folders, and applications")
         searchField.delegate = self
         searchField.sendsSearchStringImmediately = false
         searchField.sendsWholeSearchString = true
@@ -137,7 +137,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         for (index, mode) in SearchMatchMode.allCases.enumerated() {
             matchModeControl.setToolTip(mode.toolTip, forSegment: index)
         }
-        matchModeControl.setAccessibilityLabel(String(localized: "Name matching"))
+        matchModeControl.setAccessibilityLabel(L10n.string("Name matching"))
         matchModeControl.translatesAutoresizingMaskIntoConstraints = false
 
         configureFilterControls()
@@ -161,8 +161,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         configureTable()
         scrollView.documentView = tableView
 
-        let scopeLabel = filterLabel(String(localized: "Scope:"))
-        let categoryLabel = filterLabel(String(localized: "Type:"))
+        let scopeLabel = filterLabel(L10n.string("Scope:"))
+        let categoryLabel = filterLabel(L10n.string("Type:"))
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let filterBar = NSStackView(views: [scopeLabel, scopePopup, categoryLabel, categoryPopup, spacer, prioritizeFoldersButton, foldersFirstButton, settingsButton])
@@ -250,8 +250,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         settingsButton.bezelStyle = .texturedRounded
         settingsButton.controlSize = .small
-        settingsButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: String(localized: "Settings"))
-        settingsButton.toolTip = String(localized: "Settings")
+        settingsButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: L10n.string("Settings"))
+        settingsButton.toolTip = L10n.string("Settings")
         settingsButton.target = self
         settingsButton.action = #selector(openSettings(_:))
     }
@@ -277,11 +277,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let savedPaths = rules.map(\.path)
         let selectedScope = SearchPreferences.scopePath
         let selectedTitle = selectedScope.map { scopeTitle(for: $0, among: savedPaths + [$0]) }
-            ?? String(localized: "All Locations")
+            ?? L10n.string("All Locations")
         scopePopup.addItem(withTitle: selectedTitle)
-        scopePopup.item(at: 0)?.toolTip = selectedScope ?? String(localized: "All Locations")
+        scopePopup.item(at: 0)?.toolTip = selectedScope ?? L10n.string("All Locations")
 
-        let allItem = NSMenuItem(title: String(localized: "All Locations"), action: #selector(scopeMenuItemSelected(_:)), keyEquivalent: "")
+        let allItem = NSMenuItem(title: L10n.string("All Locations"), action: #selector(scopeMenuItemSelected(_:)), keyEquivalent: "")
         allItem.target = self
         allItem.representedObject = ""
         allItem.state = selectedScope == nil ? .on : .off
@@ -289,7 +289,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         if let selectedScope, !savedPaths.contains(selectedScope) {
             scopePopup.menu?.addItem(.separator())
-            let heading = NSMenuItem(title: String(localized: "Temporary Scope"), action: nil, keyEquivalent: "")
+            let heading = NSMenuItem(title: L10n.string("Temporary Scope"), action: nil, keyEquivalent: "")
             heading.isEnabled = false
             scopePopup.menu?.addItem(heading)
             let item = NSMenuItem(title: scopeTitle(for: selectedScope, among: savedPaths + [selectedScope]), action: #selector(scopeMenuItemSelected(_:)), keyEquivalent: "")
@@ -302,8 +302,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         if !rules.isEmpty {
             scopePopup.menu?.addItem(.separator())
-            let savedFoldersItem = NSMenuItem(title: String(localized: "Saved Folders"), action: nil, keyEquivalent: "")
-            let savedFoldersMenu = NSMenu(title: String(localized: "Saved Folders"))
+            let savedFoldersItem = NSMenuItem(title: L10n.string("Saved Folders"), action: nil, keyEquivalent: "")
+            let savedFoldersMenu = NSMenu(title: L10n.string("Saved Folders"))
             for rule in rules {
                 let item = NSMenuItem(title: scopeTitle(for: rule.path, among: savedPaths), action: #selector(scopeMenuItemSelected(_:)), keyEquivalent: "")
                 item.target = self
@@ -316,20 +316,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             scopePopup.menu?.addItem(savedFoldersItem)
         }
         scopePopup.menu?.addItem(.separator())
-        let chooseItem = NSMenuItem(title: String(localized: "Choose Temporary Folder…"), action: #selector(scopeCommandSelected(_:)), keyEquivalent: "")
+        let chooseItem = NSMenuItem(title: L10n.string("Choose Temporary Folder…"), action: #selector(scopeCommandSelected(_:)), keyEquivalent: "")
         chooseItem.target = self
         chooseItem.representedObject = "__choose_folder__"
         scopePopup.menu?.addItem(chooseItem)
-        let addItem = NSMenuItem(title: String(localized: "Add Saved Folder…"), action: #selector(scopeCommandSelected(_:)), keyEquivalent: "")
+        let addItem = NSMenuItem(title: L10n.string("Add Saved Folder…"), action: #selector(scopeCommandSelected(_:)), keyEquivalent: "")
         addItem.target = self
         addItem.representedObject = "__add_saved_folder__"
         scopePopup.menu?.addItem(addItem)
-        let manageItem = NSMenuItem(title: String(localized: "Manage Saved Folders…"), action: #selector(scopeCommandSelected(_:)), keyEquivalent: "")
+        let manageItem = NSMenuItem(title: L10n.string("Manage Saved Folders…"), action: #selector(scopeCommandSelected(_:)), keyEquivalent: "")
         manageItem.target = self
         manageItem.representedObject = "__manage_folders__"
         scopePopup.menu?.addItem(manageItem)
 
-        scopePopup.toolTip = selectedScope ?? String(localized: "All Locations")
+        scopePopup.toolTip = selectedScope ?? L10n.string("All Locations")
         rebuildCategoryMenu()
         prioritizeFoldersButton.state = SearchPreferences.prioritizeFolderRules ? .on : .off
         foldersFirstButton.state = SearchPreferences.foldersFirst ? .on : .off
@@ -385,11 +385,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         }
         tableView.headerView = fittedHeaderView
 
-        addColumn("name", title: String(localized: "Name"), width: 260, minimum: 140)
-        addColumn("path", title: String(localized: "Path"), width: 360, minimum: 190)
-        addColumn("kind", title: String(localized: "Kind"), width: 120, minimum: 85)
-        addColumn("size", title: String(localized: "Size"), width: 85, minimum: 70)
-        addColumn("modified", title: String(localized: "Modified"), width: 145, minimum: 115)
+        addColumn("name", title: L10n.string("Name"), width: 260, minimum: 140)
+        addColumn("path", title: L10n.string("Path"), width: 360, minimum: 190)
+        addColumn("kind", title: L10n.string("Kind"), width: 120, minimum: 85)
+        addColumn("size", title: L10n.string("Size"), width: 85, minimum: 70)
+        addColumn("modified", title: L10n.string("Modified"), width: 145, minimum: 115)
         restoreColumnOrder()
         if WindowPreferences.columnSizingMode == .manual {
             restoreColumnWidths(forKey: WindowPreferences.columnWidthsKey)
@@ -397,30 +397,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         let menu = NSMenu()
         menu.delegate = self
-        let open = menu.addItem(withTitle: String(localized: "Open"), action: #selector(openSelection(_:)), keyEquivalent: "")
+        let open = menu.addItem(withTitle: L10n.string("Open"), action: #selector(openSelection(_:)), keyEquivalent: "")
         open.identifier = NSUserInterfaceItemIdentifier("command.open")
         open.target = self
-        let openWith = menu.addItem(withTitle: String(localized: "Open With"), action: nil, keyEquivalent: "")
+        let openWith = menu.addItem(withTitle: L10n.string("Open With"), action: nil, keyEquivalent: "")
         openWith.identifier = NSUserInterfaceItemIdentifier("context.openWith")
-        openWith.submenu = NSMenu(title: String(localized: "Open With"))
-        let quickLook = menu.addItem(withTitle: String(localized: "Quick Look"), action: #selector(toggleQuickLook(_:)), keyEquivalent: "")
+        openWith.submenu = NSMenu(title: L10n.string("Open With"))
+        let quickLook = menu.addItem(withTitle: L10n.string("Quick Look"), action: #selector(toggleQuickLook(_:)), keyEquivalent: "")
         quickLook.identifier = NSUserInterfaceItemIdentifier("command.quickLook")
         quickLook.target = self
-        let reveal = menu.addItem(withTitle: String(localized: "Show in File Manager"), action: #selector(revealSelection(_:)), keyEquivalent: "")
+        let reveal = menu.addItem(withTitle: L10n.string("Show in File Manager"), action: #selector(revealSelection(_:)), keyEquivalent: "")
         reveal.identifier = NSUserInterfaceItemIdentifier("command.reveal")
         reveal.target = self
         menu.addItem(.separator())
-        let info = menu.addItem(withTitle: String(localized: "Get Info"), action: #selector(showFinderInfo(_:)), keyEquivalent: "")
+        let info = menu.addItem(withTitle: L10n.string("Get Info"), action: #selector(showFinderInfo(_:)), keyEquivalent: "")
         info.identifier = NSUserInterfaceItemIdentifier("command.getInfo")
         info.target = self
-        let share = menu.addItem(withTitle: String(localized: "Share"), action: #selector(shareSelection(_:)), keyEquivalent: "")
+        let share = menu.addItem(withTitle: L10n.string("Share"), action: #selector(shareSelection(_:)), keyEquivalent: "")
         share.identifier = NSUserInterfaceItemIdentifier("command.share")
         share.target = self
         menu.addItem(.separator())
-        let copyFiles = menu.addItem(withTitle: String(localized: "Copy Files"), action: #selector(copySelection(_:)), keyEquivalent: "")
+        let copyFiles = menu.addItem(withTitle: L10n.string("Copy Files"), action: #selector(copySelection(_:)), keyEquivalent: "")
         copyFiles.identifier = NSUserInterfaceItemIdentifier("command.copyFiles")
         copyFiles.target = self
-        let copyPath = menu.addItem(withTitle: String(localized: "Copy Path"), action: #selector(copyPath(_:)), keyEquivalent: "")
+        let copyPath = menu.addItem(withTitle: L10n.string("Copy Path"), action: #selector(copyPath(_:)), keyEquivalent: "")
         copyPath.identifier = NSUserInterfaceItemIdentifier("command.copyPath")
         copyPath.target = self
         tableView.menu = menu
@@ -849,8 +849,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private func updateRevealMenuItem(in menu: NSMenu) {
         guard let item = menu.items.first(where: { $0.identifier?.rawValue == "command.reveal" }) else { return }
         item.title = FileManagerSupport.canSelectRevealedItem
-            ? String(localized: "Show in File Manager")
-            : String(localized: "Open Containing Folder")
+            ? L10n.string("Show in File Manager")
+            : L10n.string("Open Containing Folder")
     }
 
     private func updateOpenWithMenu(in menu: NSMenu) {
@@ -859,7 +859,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         submenu.removeAllItems()
         let urls = selectedURLs
         guard !urls.isEmpty else {
-            let unavailable = submenu.addItem(withTitle: String(localized: "No Applications Available"), action: nil, keyEquivalent: "")
+            let unavailable = submenu.addItem(withTitle: L10n.string("No Applications Available"), action: nil, keyEquivalent: "")
             unavailable.isEnabled = false
             return
         }
@@ -874,7 +874,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 .localizedStandardCompare(FileManager.default.displayName(atPath: $1.path)) == .orderedAscending
         }
         if applications.isEmpty {
-            let unavailable = submenu.addItem(withTitle: String(localized: "No Applications Available"), action: nil, keyEquivalent: "")
+            let unavailable = submenu.addItem(withTitle: L10n.string("No Applications Available"), action: nil, keyEquivalent: "")
             unavailable.isEnabled = false
         } else {
             for applicationURL in applications {
@@ -941,24 +941,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 self.candidates = []
                 self.applyRanking()
                 self.spinner.stopAnimation(nil)
-                self.statusLabel.stringValue = String(localized: "Type a query and press Return")
+                self.statusLabel.stringValue = L10n.string("Type a query and press Return")
             case .started:
                 self.tableView.deselectAll(nil)
                 self.spinner.startAnimation(nil)
-                self.statusLabel.stringValue = String(localized: "Starting Spotlight search…")
+                self.statusLabel.stringValue = L10n.string("Starting Spotlight search…")
             case let .results(results, reachedLimit):
                 self.candidates = results
                 self.applyRanking()
                 self.spinner.stopAnimation(nil)
                 if reachedLimit {
                     self.statusLabel.stringValue = String.localizedStringWithFormat(
-                        String(localized: "Showing first %lld results (limit reached)"),
+                        L10n.string("Showing first %lld results (limit reached)"),
                         Int64(self.results.count)
                     )
                 } else {
                     self.statusLabel.stringValue = self.results.isEmpty
-                        ? String(localized: "No matching Spotlight results. Protected locations may require Full Disk Access.")
-                        : String.localizedStringWithFormat(String(localized: "%lld results"), Int64(self.results.count))
+                        ? L10n.string("No matching Spotlight results. Protected locations may require Full Disk Access.")
+                        : String.localizedStringWithFormat(L10n.string("%lld results"), Int64(self.results.count))
                 }
             case let .failed(failure):
                 self.candidates = []
@@ -966,9 +966,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 self.spinner.stopAnimation(nil)
                 switch failure {
                 case .couldNotStart:
-                    self.statusLabel.stringValue = String(localized: "Spotlight search could not start.")
+                    self.statusLabel.stringValue = L10n.string("Spotlight search could not start.")
                 case .timedOut:
-                    self.statusLabel.stringValue = String(localized: "Spotlight search timed out.")
+                    self.statusLabel.stringValue = L10n.string("Spotlight search timed out.")
                 }
             }
         }
@@ -1098,7 +1098,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         searchService.cancel()
         lastSearchRequest = nil
         if !searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            statusLabel.stringValue = String(localized: "Press Return to search")
+            statusLabel.stringValue = L10n.string("Press Return to search")
         }
     }
 
@@ -1137,7 +1137,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = String(localized: "Choose")
+        panel.prompt = L10n.string("Choose")
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             guard response == .OK, let url = panel.url else {
@@ -1154,7 +1154,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        panel.prompt = String(localized: "Add")
+        panel.prompt = L10n.string("Add")
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             guard response == .OK, !panel.urls.isEmpty else {
@@ -1296,8 +1296,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         if error != nil {
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = String(localized: "Could Not Show Info")
-            alert.informativeText = String(localized: "Finder could not open the information window. Allow FindAll to control Finder in Privacy & Security > Automation, then try again.")
+            alert.messageText = L10n.string("Could Not Show Info")
+            alert.informativeText = L10n.string("Finder could not open the information window. Allow FindAll to control Finder in Privacy & Security > Automation, then try again.")
             alert.runModal()
         }
     }
@@ -1410,10 +1410,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             guard self != nil, let window else { return }
             let alert = NSAlert()
             alert.alertStyle = .informational
-            alert.messageText = String(localized: "Full Disk Access Recommended")
-            alert.informativeText = String(localized: "FindAll can search ordinary indexed locations without Full Disk Access. Enable it to include more protected locations, then restart the app.")
-            alert.addButton(withTitle: String(localized: "Open System Settings"))
-            alert.addButton(withTitle: String(localized: "Later"))
+            alert.messageText = L10n.string("Full Disk Access Recommended")
+            alert.informativeText = L10n.string("FindAll can search ordinary indexed locations without Full Disk Access. Enable it to include more protected locations, then restart the app.")
+            alert.addButton(withTitle: L10n.string("Open System Settings"))
+            alert.addButton(withTitle: L10n.string("Later"))
             alert.beginSheetModal(for: window) { response in
                 if response == .alertFirstButtonReturn {
                     FullDiskAccessSupport.openSystemSettings()
@@ -1455,9 +1455,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             frame.size.height = max(window.minSize.height, size.height)
             window.setFrame(frame, display: false)
         }
-        if WindowPreferences.placement == .remember, let origin = WindowPreferences.savedOrigin {
-            window.setFrameOrigin(origin)
-            constrainWindowToVisibleScreens()
+        if WindowPreferences.placement == .remember {
+            if let origin = WindowPreferences.savedOrigin {
+                window.setFrameOrigin(origin)
+                constrainWindowToVisibleScreens()
+            } else {
+                centerWindowOnCurrentDisplay()
+            }
         }
     }
 

@@ -17,19 +17,19 @@ enum CommandID: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .globalToggle: return String(localized: "Show or hide FindAll")
-        case .open: return String(localized: "Open selected items")
-        case .quickLook: return String(localized: "Quick Look")
-        case .reveal: return String(localized: "Show in File Manager")
-        case .copyFiles: return String(localized: "Copy Files")
-        case .copyPath: return String(localized: "Copy full paths")
-        case .share: return String(localized: "Share")
-        case .getInfo: return String(localized: "Get Info")
+        case .globalToggle: return L10n.string("Show or hide FindAll")
+        case .open: return L10n.string("Open selected items")
+        case .quickLook: return L10n.string("Quick Look")
+        case .reveal: return L10n.string("Show in File Manager")
+        case .copyFiles: return L10n.string("Copy Files")
+        case .copyPath: return L10n.string("Copy full paths")
+        case .share: return L10n.string("Share")
+        case .getInfo: return L10n.string("Get Info")
         }
     }
 
     var scopeTitle: String {
-        self == .globalToggle ? String(localized: "Global") : String(localized: "Result list")
+        self == .globalToggle ? L10n.string("Global") : L10n.string("Result list")
     }
 }
 
@@ -69,7 +69,7 @@ struct KeyboardShortcut: Codable, Equatable {
     private var keyDisplayName: String {
         switch keyCode {
         case 36, 76: return "↩"
-        case 49: return String(localized: "Space")
+        case 49: return L10n.string("Space")
         case 51: return "⌫"
         case 53: return "Esc"
         case 123: return "←"
@@ -172,7 +172,7 @@ final class ShortcutRecorderButton: NSButton {
     func refresh() {
         guard !isRecording else { return }
         title = ShortcutSettings.shortcut(for: command).displayName
-        toolTip = String.localizedStringWithFormat(String(localized: "Current shortcut: %@"), title)
+        toolTip = String.localizedStringWithFormat(L10n.string("Current shortcut: %@"), title)
     }
 
     @objc private func beginRecording(_ sender: Any?) {
@@ -183,7 +183,7 @@ final class ShortcutRecorderButton: NSButton {
         onBeginRecording?()
         previousTitle = ShortcutSettings.shortcut(for: command).displayName
         isRecording = true
-        title = String.localizedStringWithFormat(String(localized: "%@ → press new shortcut"), previousTitle)
+        title = String.localizedStringWithFormat(L10n.string("%@ → press new shortcut"), previousTitle)
         highlight(true)
         eventMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown]
@@ -197,7 +197,7 @@ final class ShortcutRecorderButton: NSButton {
                 let flags = event.modifierFlags.intersection(KeyboardShortcut.supportedModifiers)
                 let modifierText = KeyboardShortcut.modifierDisplayName(flags)
                 self.title = modifierText.isEmpty
-                    ? String.localizedStringWithFormat(String(localized: "%@ → press new shortcut"), self.previousTitle)
+                    ? String.localizedStringWithFormat(L10n.string("%@ → press new shortcut"), self.previousTitle)
                     : modifierText
                 return event
             case .keyDown:
@@ -217,7 +217,7 @@ final class ShortcutRecorderButton: NSButton {
         let characters = event.charactersIgnoringModifiers ?? ""
         let isSpecialKey = [36, 49, 51, 76, 123, 124, 125, 126].contains(Int(event.keyCode))
         guard !flags.isEmpty || isSpecialKey else {
-            onInvalid?(String(localized: "Letter, number, and punctuation shortcuts must include Command, Option, Control, or Shift."))
+            onInvalid?(L10n.string("Letter, number, and punctuation shortcuts must include Command, Option, Control, or Shift."))
             NSSound.beep()
             return nil
         }
@@ -253,12 +253,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private let onShortcutChange: () -> Void
     private var recorderButtons: [ShortcutRecorderButton] = []
     private let shortcutMessageLabel = NSTextField(labelWithString: "")
-    private let prioritizeFolderRulesButton = NSButton(checkboxWithTitle: String(localized: "Prioritize folder rules"), target: nil, action: nil)
-    private let foldersFirstButton = NSButton(checkboxWithTitle: String(localized: "Keep folders above files within the same priority"), target: nil, action: nil)
+    private let prioritizeFolderRulesButton = NSButton(checkboxWithTitle: L10n.string("Prioritize folder rules"), target: nil, action: nil)
+    private let foldersFirstButton = NSButton(checkboxWithTitle: L10n.string("Keep folders above files within the same priority"), target: nil, action: nil)
     private let sortModePopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let fullDiskAccessStatusLabel = NSTextField(labelWithString: "")
     private lazy var openFullDiskAccessSettingsButton = NSButton(
-        title: String(localized: "Open Full Disk Access Settings"),
+        title: L10n.string("Open Full Disk Access Settings"),
         target: self,
         action: #selector(openFullDiskAccessSettings(_:))
     )
@@ -270,9 +270,10 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private let rememberPlacementButton = NSButton(radioButtonWithTitle: WindowPlacement.remember.title, target: nil, action: nil)
     private let startupSizePopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let columnSizingPopup = NSPopUpButton(frame: .zero, pullsDown: true)
-    private let settingsKeepOnTopButton = NSButton(checkboxWithTitle: String(localized: "Keep on top in current Space"), target: nil, action: nil)
-    private let settingsAllSpacesButton = NSButton(checkboxWithTitle: String(localized: "Show on all Spaces"), target: nil, action: nil)
+    private let settingsKeepOnTopButton = NSButton(checkboxWithTitle: L10n.string("Keep on top in current Space"), target: nil, action: nil)
+    private let settingsAllSpacesButton = NSButton(checkboxWithTitle: L10n.string("Show on all Spaces"), target: nil, action: nil)
     private let fileManagerPopup = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let languagePopup = NSPopUpButton(frame: .zero, pullsDown: true)
 
     init(onChange: @escaping () -> Void) {
         self.onShortcutChange = onChange
@@ -282,7 +283,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             backing: .buffered,
             defer: false
         )
-        window.title = String(localized: "FindAll Settings")
+        window.title = L10n.string("FindAll Settings")
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -310,17 +311,17 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         tabView.translatesAutoresizingMaskIntoConstraints = false
 
         let searchTab = NSTabViewItem(identifier: "search")
-        searchTab.label = String(localized: "Search & Ranking")
+        searchTab.label = L10n.string("Search & Ranking")
         searchTab.view = makeSearchSettingsView()
         tabView.addTabViewItem(searchTab)
 
         let shortcutsTab = NSTabViewItem(identifier: "shortcuts")
-        shortcutsTab.label = String(localized: "Keyboard Shortcuts")
+        shortcutsTab.label = L10n.string("Keyboard Shortcuts")
         shortcutsTab.view = makeShortcutsView()
         tabView.addTabViewItem(shortcutsTab)
 
         let windowTab = NSTabViewItem(identifier: "window")
-        windowTab.label = String(localized: "Window & Layout")
+        windowTab.label = L10n.string("Window & Layout")
         windowTab.view = makeWindowSettingsView()
         tabView.addTabViewItem(windowTab)
 
@@ -335,18 +336,18 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func makeSearchSettingsView() -> NSView {
         let view = NSView()
-        let accessHeading = NSTextField(labelWithString: String(localized: "Full Disk Access"))
+        let accessHeading = NSTextField(labelWithString: L10n.string("Full Disk Access"))
         accessHeading.font = .boldSystemFont(ofSize: 14)
-        let accessHelp = NSTextField(wrappingLabelWithString: String(localized: "Full Disk Access lets FindAll include more protected locations in Spotlight results. Enable it in System Settings, then restart the app."))
+        let accessHelp = NSTextField(wrappingLabelWithString: L10n.string("Full Disk Access lets FindAll include more protected locations in Spotlight results. Enable it in System Settings, then restart the app."))
         accessHelp.textColor = .secondaryLabelColor
         fullDiskAccessStatusLabel.font = .systemFont(ofSize: 12, weight: .medium)
 
-        let heading = NSTextField(labelWithString: String(localized: "Result Ordering"))
+        let heading = NSTextField(labelWithString: L10n.string("Result Ordering"))
         heading.font = .boldSystemFont(ofSize: 17)
-        let help = NSTextField(wrappingLabelWithString: String(localized: "This is the default ordering used when each search first appears. Clicking a result-table header changes only the current results; the next search returns to this default. Folder priority and folders-first remain independent."))
+        let help = NSTextField(wrappingLabelWithString: L10n.string("This is the default ordering used when each search first appears. Clicking a result-table header changes only the current results; the next search returns to this default. Folder priority and folders-first remain independent."))
         help.textColor = .secondaryLabelColor
 
-        let sortLabel = NSTextField(labelWithString: String(localized: "Default ordering:"))
+        let sortLabel = NSTextField(labelWithString: L10n.string("Default ordering:"))
         sortModePopup.widthAnchor.constraint(equalToConstant: 280).isActive = true
         let sortRow = NSStackView(views: [sortLabel, sortModePopup])
         sortRow.orientation = .horizontal
@@ -358,9 +359,9 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         foldersFirstButton.target = self
         foldersFirstButton.action = #selector(foldersFirstChanged(_:))
 
-        let folderHeading = NSTextField(labelWithString: String(localized: "Saved Folders and Ranking"))
+        let folderHeading = NSTextField(labelWithString: L10n.string("Saved Folders and Ranking"))
         folderHeading.font = .boldSystemFont(ofSize: 14)
-        let folderHelp = NSTextField(wrappingLabelWithString: String(localized: "Saved folders appear in the Scope menu only when you add them explicitly. Pinned folders rank above Preferred folders; Normal folders receive no ranking boost."))
+        let folderHelp = NSTextField(wrappingLabelWithString: L10n.string("Saved folders appear in the Scope menu only when you add them explicitly. Pinned folders rank above Preferred folders; Normal folders receive no ranking boost."))
         folderHelp.textColor = .secondaryLabelColor
 
         configureRulesTable()
@@ -369,10 +370,10 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .bezelBorder
 
-        let add = NSButton(title: String(localized: "Add…"), target: self, action: #selector(addFolderRule(_:)))
-        let remove = NSButton(title: String(localized: "Remove"), target: self, action: #selector(removeFolderRule(_:)))
-        let up = NSButton(title: String(localized: "Move Up"), target: self, action: #selector(moveFolderRuleUp(_:)))
-        let down = NSButton(title: String(localized: "Move Down"), target: self, action: #selector(moveFolderRuleDown(_:)))
+        let add = NSButton(title: L10n.string("Add…"), target: self, action: #selector(addFolderRule(_:)))
+        let remove = NSButton(title: L10n.string("Remove"), target: self, action: #selector(removeFolderRule(_:)))
+        let up = NSButton(title: L10n.string("Move Up"), target: self, action: #selector(moveFolderRuleUp(_:)))
+        let down = NSButton(title: L10n.string("Move Down"), target: self, action: #selector(moveFolderRuleDown(_:)))
         let buttons = NSStackView(views: [add, remove, up, down])
         buttons.orientation = .horizontal
         buttons.spacing = 8
@@ -420,9 +421,18 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func makeWindowSettingsView() -> NSView {
         let view = NSView()
-        let windowHeading = NSTextField(labelWithString: String(localized: "Window Presentation"))
+        let languageHeading = NSTextField(labelWithString: L10n.string("Language"))
+        languageHeading.font = .boldSystemFont(ofSize: 17)
+        let languageLabel = NSTextField(labelWithString: L10n.string("Application language:"))
+        languagePopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        let languageRow = NSStackView(views: [languageLabel, languagePopup])
+        languageRow.orientation = .horizontal
+        languageRow.alignment = .centerY
+        languageRow.spacing = 12
+
+        let windowHeading = NSTextField(labelWithString: L10n.string("Window Presentation"))
         windowHeading.font = .boldSystemFont(ofSize: 17)
-        let placementLabel = NSTextField(labelWithString: String(localized: "When showing FindAll:"))
+        let placementLabel = NSTextField(labelWithString: L10n.string("When showing FindAll:"))
 
         centerPlacementButton.target = self
         centerPlacementButton.action = #selector(windowPlacementChanged(_:))
@@ -434,27 +444,27 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         placementOptions.spacing = 5
         placementOptions.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
-        let startupSizeLabel = NSTextField(labelWithString: String(localized: "At app launch:"))
+        let startupSizeLabel = NSTextField(labelWithString: L10n.string("At app launch:"))
         startupSizePopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        let resetWindowSize = NSButton(title: String(localized: "Restore Default Window Size Now"), target: self, action: #selector(resetWindowSize(_:)))
+        let resetWindowSize = NSButton(title: L10n.string("Restore Default Window Size Now"), target: self, action: #selector(resetWindowSize(_:)))
         settingsKeepOnTopButton.target = self
         settingsKeepOnTopButton.action = #selector(settingsWindowBehaviorChanged(_:))
         settingsAllSpacesButton.target = self
         settingsAllSpacesButton.action = #selector(settingsWindowBehaviorChanged(_:))
 
-        let layoutHeading = NSTextField(labelWithString: String(localized: "Result List Layout"))
+        let layoutHeading = NSTextField(labelWithString: L10n.string("Result List Layout"))
         layoutHeading.font = .boldSystemFont(ofSize: 17)
-        let layoutHelp = NSTextField(wrappingLabelWithString: String(localized: "Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Manual column widths change only when you drag a divider; resizing the window does not redistribute them, and overflow uses horizontal scrolling."))
+        let layoutHelp = NSTextField(wrappingLabelWithString: L10n.string("Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Manual column widths change only when you drag a divider; resizing the window does not redistribute them, and overflow uses horizontal scrolling."))
         layoutHelp.textColor = .secondaryLabelColor
-        let sizingLabel = NSTextField(labelWithString: String(localized: "Column widths:"))
+        let sizingLabel = NSTextField(labelWithString: L10n.string("Column widths:"))
         columnSizingPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        let resetLayout = NSButton(title: String(localized: "Restore Default Column Layout"), target: self, action: #selector(resetColumnLayout(_:)))
+        let resetLayout = NSButton(title: L10n.string("Restore Default Column Layout"), target: self, action: #selector(resetColumnLayout(_:)))
 
-        let fileManagerHeading = NSTextField(labelWithString: String(localized: "File Manager"))
+        let fileManagerHeading = NSTextField(labelWithString: L10n.string("File Manager"))
         fileManagerHeading.font = .boldSystemFont(ofSize: 17)
-        let fileManagerHelp = NSTextField(wrappingLabelWithString: String(localized: "Double-clicking a folder opens it in the selected file manager. Showing an item opens its parent and selects it in Finder or QSpace; unsupported file managers open the parent folder."))
+        let fileManagerHelp = NSTextField(wrappingLabelWithString: L10n.string("Double-clicking a folder opens it in the selected file manager. Showing an item opens its parent and selects it in Finder or QSpace; unsupported file managers open the parent folder."))
         fileManagerHelp.textColor = .secondaryLabelColor
-        let fileManagerLabel = NSTextField(labelWithString: String(localized: "Default file manager:"))
+        let fileManagerLabel = NSTextField(labelWithString: L10n.string("Default file manager:"))
         fileManagerPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         let placementRow = NSStackView(views: [placementLabel, placementOptions])
@@ -475,6 +485,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         fileManagerRow.spacing = 12
 
         let stack = NSStackView(views: [
+            languageHeading,
+            languageRow,
             windowHeading,
             placementRow,
             startupSizeRow,
@@ -492,6 +504,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
+        stack.setCustomSpacing(18, after: languageRow)
         stack.setCustomSpacing(18, after: settingsAllSpacesButton)
         stack.setCustomSpacing(18, after: resetLayout)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -513,11 +526,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         rulesTableView.usesAlternatingRowBackgroundColors = true
         rulesTableView.rowHeight = 28
         let folderColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("folder"))
-        folderColumn.title = String(localized: "Folder")
+        folderColumn.title = L10n.string("Folder")
         folderColumn.minWidth = 300
         folderColumn.width = 430
         let priorityColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("priority"))
-        priorityColumn.title = String(localized: "Priority")
+        priorityColumn.title = L10n.string("Priority")
         priorityColumn.minWidth = 130
         priorityColumn.width = 150
         rulesTableView.addTableColumn(folderColumn)
@@ -526,23 +539,23 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func makeShortcutsView() -> NSView {
         let view = NSView()
-        let heading = NSTextField(labelWithString: String(localized: "Keyboard Shortcuts"))
+        let heading = NSTextField(labelWithString: L10n.string("Keyboard Shortcuts"))
         heading.font = .boldSystemFont(ofSize: 17)
-        let help = NSTextField(wrappingLabelWithString: String(localized: "Every button shows its saved shortcut. Click one and press a new combination; modifiers are shown live. Click elsewhere or press Escape to cancel."))
+        let help = NSTextField(wrappingLabelWithString: L10n.string("Every button shows its saved shortcut. Click one and press a new combination; modifiers are shown live. Click elsewhere or press Escape to cancel."))
         help.textColor = .secondaryLabelColor
 
-        let globalHeading = NSTextField(labelWithString: String(localized: "Available in Any Application"))
+        let globalHeading = NSTextField(labelWithString: L10n.string("Available in Any Application"))
         globalHeading.font = .boldSystemFont(ofSize: 14)
         let globalRows = makeShortcutRows(commands: [.globalToggle])
-        let resultsHeading = NSTextField(labelWithString: String(localized: "FindAll Result List"))
+        let resultsHeading = NSTextField(labelWithString: L10n.string("FindAll Result List"))
         resultsHeading.font = .boldSystemFont(ofSize: 14)
-        let resultsHelp = NSTextField(wrappingLabelWithString: String(localized: "These shortcuts work only when the result list has keyboard focus and an item is selected."))
+        let resultsHelp = NSTextField(wrappingLabelWithString: L10n.string("These shortcuts work only when the result list has keyboard focus and an item is selected."))
         resultsHelp.textColor = .secondaryLabelColor
         let resultRows = makeShortcutRows(commands: CommandID.resultListCommands)
 
         shortcutMessageLabel.textColor = .systemRed
         shortcutMessageLabel.lineBreakMode = .byTruncatingTail
-        let resetAll = NSButton(title: String(localized: "Restore All Defaults"), target: self, action: #selector(resetAllShortcuts(_:)))
+        let resetAll = NSButton(title: L10n.string("Restore All Defaults"), target: self, action: #selector(resetAllShortcuts(_:)))
         resetAll.bezelStyle = .rounded
 
         [heading, help, globalHeading, globalRows, resultsHeading, resultsHelp, resultRows, shortcutMessageLabel, resetAll].forEach {
@@ -587,14 +600,14 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
                 self?.recorderButtons
                     .filter { $0 !== recorder && $0.isRecording }
                     .forEach { $0.cancelRecording() }
-                self?.showShortcutMessage(String(localized: "Recording shortcut…"), isError: false)
+                self?.showShortcutMessage(L10n.string("Recording shortcut…"), isError: false)
             }
             recorder.onShortcut = { [weak self] command, shortcut in self?.save(shortcut, for: command) }
             recorder.onCancel = { [weak self] in self?.showShortcutMessage("") }
             recorder.onInvalid = { [weak self] message in self?.showShortcutMessage(message) }
             recorderButtons.append(recorder)
 
-            let reset = NSButton(title: String(localized: "Reset"), target: self, action: #selector(resetOne(_:)))
+            let reset = NSButton(title: L10n.string("Reset"), target: self, action: #selector(resetOne(_:)))
             reset.tag = CommandID.allCases.firstIndex(of: command) ?? 0
             reset.bezelStyle = .inline
 
@@ -658,6 +671,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     private func refreshWindowSettings() {
+        rebuildLanguageMenu()
         let placement = WindowPreferences.placement
         centerPlacementButton.state = placement == .center ? .on : .off
         rememberPlacementButton.state = placement == .remember ? .on : .off
@@ -667,6 +681,16 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         settingsAllSpacesButton.state = WindowPreferences.showOnAllSpaces ? .on : .off
 
         rebuildFileManagerMenu()
+    }
+
+    private func rebuildLanguageMenu() {
+        let selectedLanguage = AppLanguagePreferences.currentLanguage
+        rebuildPullDown(
+            languagePopup,
+            selectedTitle: selectedLanguage.displayName,
+            choices: AppLanguage.allCases.map { ($0.displayName, $0.rawValue, $0 == selectedLanguage) },
+            action: #selector(languageChanged(_:))
+        )
     }
 
     private func rebuildStartupSizeMenu() {
@@ -705,15 +729,15 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         let customName = customURL.map { FileManager.default.displayName(atPath: $0.path) }
         let selectedTitle: String
         switch selectedChoice {
-        case .systemDefault: selectedTitle = String(localized: "System Default")
+        case .systemDefault: selectedTitle = L10n.string("System Default")
         case .finder: selectedTitle = "Finder"
-        case .custom: selectedTitle = customName ?? String(localized: "System Default")
+        case .custom: selectedTitle = customName ?? L10n.string("System Default")
         }
 
         fileManagerPopup.removeAllItems()
         fileManagerPopup.addItem(withTitle: selectedTitle)
         let choices: [(String, FileManagerChoice)] = [
-            (String(localized: "System Default"), .systemDefault),
+            (L10n.string("System Default"), .systemDefault),
             ("Finder", .finder)
         ]
         for (title, choice) in choices {
@@ -736,7 +760,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         }
         fileManagerPopup.menu?.addItem(.separator())
         let choose = NSMenuItem(
-            title: String(localized: "Choose Other Application…"),
+            title: L10n.string("Choose Other Application…"),
             action: #selector(fileManagerChanged(_:)),
             keyEquivalent: ""
         )
@@ -806,6 +830,64 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         WindowPreferences.placement = placement
     }
 
+    @objc private func languageChanged(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let language = AppLanguage(rawValue: rawValue) else { return }
+        let currentLanguage = AppLanguagePreferences.currentLanguage
+        guard language != currentLanguage, let window else {
+            rebuildLanguageMenu()
+            return
+        }
+
+        let failureTitle = L10n.string("Could Not Restart FindAll")
+        let failureMessage = L10n.string("The language change will apply the next time you open FindAll.")
+        let failureButtonTitle = L10n.string("OK")
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = L10n.string("Change Language?")
+        alert.informativeText = String.localizedStringWithFormat(
+            L10n.string("FindAll needs to restart to use %@."),
+            language.displayName
+        )
+        alert.addButton(withTitle: L10n.string("Restart and Apply"))
+        alert.addButton(withTitle: L10n.string("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            guard response == .alertFirstButtonReturn else {
+                self.rebuildLanguageMenu()
+                return
+            }
+
+            AppLanguagePreferences.select(language)
+            self.rebuildLanguageMenu()
+            guard let delegate = NSApp.delegate as? AppDelegate else {
+                self.showLanguageRestartFailure(
+                    title: failureTitle,
+                    message: failureMessage,
+                    buttonTitle: failureButtonTitle
+                )
+                return
+            }
+            delegate.relaunchApplication { [weak self] _ in
+                self?.showLanguageRestartFailure(
+                    title: failureTitle,
+                    message: failureMessage,
+                    buttonTitle: failureButtonTitle
+                )
+            }
+        }
+    }
+
+    private func showLanguageRestartFailure(title: String, message: String, buttonTitle: String) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: buttonTitle)
+        alert.beginSheetModal(for: window)
+    }
+
     @objc private func startupWindowSizeChanged(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
               let mode = WindowStartupSize(rawValue: rawValue) else { return }
@@ -852,7 +934,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.application]
         panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
-        panel.prompt = String(localized: "Choose")
+        panel.prompt = L10n.string("Choose")
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             guard response == .OK, let url = panel.url else {
@@ -867,17 +949,17 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private func refreshFullDiskAccessStatus() {
         switch FullDiskAccessSupport.currentStatus() {
         case .granted:
-            fullDiskAccessStatusLabel.stringValue = String(localized: "Full Disk Access is available.")
+            fullDiskAccessStatusLabel.stringValue = L10n.string("Full Disk Access is available.")
             fullDiskAccessStatusLabel.textColor = .systemGreen
-            openFullDiskAccessSettingsButton.title = String(localized: "Manage Full Disk Access…")
+            openFullDiskAccessSettingsButton.title = L10n.string("Manage Full Disk Access…")
         case .denied:
-            fullDiskAccessStatusLabel.stringValue = String(localized: "Full Disk Access is not available.")
+            fullDiskAccessStatusLabel.stringValue = L10n.string("Full Disk Access is not available.")
             fullDiskAccessStatusLabel.textColor = .systemOrange
-            openFullDiskAccessSettingsButton.title = String(localized: "Open Full Disk Access Settings")
+            openFullDiskAccessSettingsButton.title = L10n.string("Open Full Disk Access Settings")
         case .unknown:
-            fullDiskAccessStatusLabel.stringValue = String(localized: "Full Disk Access could not be confirmed.")
+            fullDiskAccessStatusLabel.stringValue = L10n.string("Full Disk Access could not be confirmed.")
             fullDiskAccessStatusLabel.textColor = .secondaryLabelColor
-            openFullDiskAccessSettingsButton.title = String(localized: "Open Full Disk Access Settings")
+            openFullDiskAccessSettingsButton.title = L10n.string("Open Full Disk Access Settings")
         }
     }
 
@@ -906,7 +988,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        panel.prompt = String(localized: "Add")
+        panel.prompt = L10n.string("Add")
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .OK else { return }
             for url in panel.urls where !self.folderRules.contains(where: { $0.path == url.path }) {
@@ -966,19 +1048,19 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func save(_ shortcut: KeyboardShortcut, for command: CommandID) {
         if command == .globalToggle && shortcut.modifiers.isEmpty {
-            showShortcutMessage(String(localized: "The global shortcut must include Command, Option, Control, or Shift."))
+            showShortcutMessage(L10n.string("The global shortcut must include Command, Option, Control, or Shift."))
             refreshButtons()
             NSSound.beep()
             return
         }
         if isReservedMacShortcut(shortcut, for: command) {
-            showShortcutMessage(String(localized: "That shortcut is reserved by a standard macOS command."))
+            showShortcutMessage(L10n.string("That shortcut is reserved by a standard macOS command."))
             refreshButtons()
             NSSound.beep()
             return
         }
         if let conflict = ShortcutSettings.conflictingCommand(for: shortcut, excluding: command) {
-            let message = String.localizedStringWithFormat(String(localized: "That shortcut is already assigned to “%@”."), conflict.title)
+            let message = String.localizedStringWithFormat(L10n.string("That shortcut is already assigned to “%@”."), conflict.title)
             showShortcutMessage(message)
             refreshButtons()
             NSSound.beep()
@@ -991,7 +1073,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             return
         }
         ShortcutSettings.set(shortcut, for: command)
-        showShortcutMessage(String(localized: "Shortcut updated."), isError: false)
+        showShortcutMessage(L10n.string("Shortcut updated."), isError: false)
         refreshButtons()
         onShortcutChange()
     }
@@ -1011,12 +1093,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func validateGlobalShortcut(_ shortcut: KeyboardShortcut) -> String? {
         guard let delegate = NSApp.delegate as? AppDelegate else {
-            return String(localized: "The global shortcut could not be registered because the application is not ready.")
+            return L10n.string("The global shortcut could not be registered because the application is not ready.")
         }
         let status = delegate.validateGlobalShortcut(shortcut)
         guard status != noErr else { return nil }
         return String.localizedStringWithFormat(
-            String(localized: "The global shortcut could not be registered (error %lld). It may already be used by macOS or another application."),
+            L10n.string("The global shortcut could not be registered (error %lld). It may already be used by macOS or another application."),
             Int64(status)
         )
     }
@@ -1031,7 +1113,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             return
         }
         ShortcutSettings.reset(command)
-        showShortcutMessage(String(localized: "Shortcut restored."), isError: false)
+        showShortcutMessage(L10n.string("Shortcut restored."), isError: false)
         refreshButtons()
         onShortcutChange()
     }
@@ -1043,7 +1125,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             return
         }
         ShortcutSettings.resetAll()
-        showShortcutMessage(String(localized: "All shortcuts restored."), isError: false)
+        showShortcutMessage(L10n.string("All shortcuts restored."), isError: false)
         refreshButtons()
         onShortcutChange()
     }

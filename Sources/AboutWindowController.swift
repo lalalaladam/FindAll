@@ -8,7 +8,7 @@ final class AboutWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = String(localized: "About FindAll")
+        window.title = L10n.string("About FindAll")
         window.isReleasedWhenClosed = false
         super.init(window: window)
         buildInterface()
@@ -23,24 +23,24 @@ final class AboutWindowController: NSWindowController {
         let build = info["CFBundleVersion"] as? String ?? "0"
         let icon = NSImageView(image: NSApp.applicationIconImage)
         icon.imageScaling = .scaleProportionallyUpOrDown
-        icon.setAccessibilityLabel(String(localized: "FindAll application icon"))
+        icon.setAccessibilityLabel(L10n.string("FindAll application icon"))
 
         let name = label("FindAll", size: 26, weight: .bold)
         let standardVersion = label(
-            String.localizedStringWithFormat(String(localized: "Version %@ (Build %@)"), version, build),
+            String.localizedStringWithFormat(L10n.string("Version %@ (Build %@)"), version, build),
             size: 13
         )
-        let description = label(String(localized: "A native, keyboard-friendly file search interface for macOS."), size: 13)
-        let spotlight = label(String(localized: "Search results are provided using macOS Spotlight metadata."), size: 12, color: .secondaryLabelColor)
+        let description = label(L10n.string("A native, keyboard-friendly file search interface for macOS."), size: 13)
+        let spotlight = label(L10n.string("Search results are provided using macOS Spotlight metadata."), size: 12, color: .secondaryLabelColor)
 
         var views: [NSView] = [icon, name, standardVersion]
 #if DEBUG
         views.append(contentsOf: [
-            label(String.localizedStringWithFormat(String(localized: "Version: v%@"), version), size: 12),
-            label(String.localizedStringWithFormat(String(localized: "Build: %@"), build), size: 12),
-            label(String.localizedStringWithFormat(String(localized: "Commit: %@"), info["FindAllGitCommit"] as? String ?? "unknown"), size: 12),
-            label(String.localizedStringWithFormat(String(localized: "Status: %@"), info["FindAllGitStatus"] as? String ?? "unknown"), size: 12),
-            label(String.localizedStringWithFormat(String(localized: "Build Time: %@"), info["FindAllBuildTime"] as? String ?? "unknown"), size: 12)
+            label(String.localizedStringWithFormat(L10n.string("Version: v%@"), version), size: 12),
+            label(String.localizedStringWithFormat(L10n.string("Build: %@"), build), size: 12),
+            label(String.localizedStringWithFormat(L10n.string("Commit: %@"), info["FindAllGitCommit"] as? String ?? "unknown"), size: 12),
+            label(String.localizedStringWithFormat(L10n.string("Status: %@"), info["FindAllGitStatus"] as? String ?? "unknown"), size: 12),
+            label(String.localizedStringWithFormat(L10n.string("Build Time: %@"), info["FindAllBuildTime"] as? String ?? "unknown"), size: 12)
         ])
 #endif
         views.append(contentsOf: [description, spotlight, label("© 2026 FindAll", size: 12, color: .secondaryLabelColor)])
