@@ -139,11 +139,11 @@ enum SearchMatchMode: String, CaseIterable, Codable {
     var toolTip: String {
         switch self {
         case .contains:
-            return String(localized: "Matches file names containing the entire entered text. Spaces are treated as part of the name.")
+            return String(localized: "Matches file names that contain the entered text.")
         case .prefix:
-            return String(localized: "Matches file names starting with the entire entered text. Spaces are treated as part of the name.")
+            return String(localized: "Matches file names that start with the entered text.")
         case .exact:
-            return String(localized: "Matches the entire file name or display name, ignoring letter case and diacritics.")
+            return String(localized: "Matches the complete file name.")
         }
     }
 }

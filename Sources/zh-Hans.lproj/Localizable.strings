@@ -16,9 +16,9 @@
 "Starts With" = "开头";
 "Exact" = "精确";
 "Name matching" = "名称匹配";
-"Matches file names containing the entire entered text. Spaces are treated as part of the name." = "文件名任意位置包含整段输入内容；空格也视为文件名的一部分。";
-"Matches file names starting with the entire entered text. Spaces are treated as part of the name." = "文件名以整段输入内容开头；空格也视为文件名的一部分。";
-"Matches the entire file name or display name, ignoring letter case and diacritics." = "精确匹配整个文件名或显示名称，不区分字母大小写和音调符号。";
+"Matches file names that contain the entered text." = "文件名包含输入内容。";
+"Matches file names that start with the entered text." = "文件名以输入内容开头。";
+"Matches the complete file name." = "完整文件名与输入内容一致。";
 "Automatic sizing expands Path first and Name second. Manual sizing keeps your column widths and uses horizontal scrolling when needed." = "自动调整时会优先伸缩“路径”列，其次是“名称”列；手动调整会保留列宽，并在需要时使用横向滚动。";
 "Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Fixed widths use horizontal scrolling when needed." = "自动适应模式仍可调整列宽，其他列会自动补偿以避免横向滚动；名称和修改时间最后压缩，路径最先压缩。固定列宽模式会在需要时使用横向滚动。";
 "Available in Any Application" = "在任何应用中均可用";

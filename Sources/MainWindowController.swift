@@ -445,20 +445,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         if scrollView.scrollerStyle != desiredScrollerStyle {
             scrollView.scrollerStyle = desiredScrollerStyle
         }
+        let allowsHorizontalScrolling = !fitsWindow
+        if scrollView.hasHorizontalScroller != allowsHorizontalScrolling {
+            scrollView.hasHorizontalScroller = allowsHorizontalScrolling
+        }
         var contentInsets = scrollView.contentInsets
         contentInsets.bottom = 0
         scrollView.contentInsets = contentInsets
-        if fitsWindow, scrollView.hasHorizontalScroller {
-            scrollView.hasHorizontalScroller = false
-        }
         scrollView.tile()
-        let currentColumnsWidth = tableView.tableColumns.reduce(0) { $0 + $1.width }
-        let needsHorizontalScroller = !fitsWindow
-            && currentColumnsWidth > floor(scrollView.contentSize.width) + 0.5
-        if scrollView.hasHorizontalScroller != needsHorizontalScroller {
-            scrollView.hasHorizontalScroller = needsHorizontalScroller
-            scrollView.tile()
-        }
         let viewportWidth = floor(scrollView.contentSize.width)
         guard viewportWidth > 0 else { return }
         let usableWidth = fitsWindow ? fittedColumnLayoutWidth : viewportWidth
@@ -479,17 +473,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         let columnsWidth = tableView.tableColumns.reduce(0) { $0 + $1.width }
         var frame = tableView.frame
-        frame.size.width = fitsWindow
-            ? usableWidth
-            : max(viewportWidth, columnsWidth)
-        tableView.frame = frame
-        if !scrollView.hasHorizontalScroller, scrollView.contentView.bounds.origin.x != 0 {
+        if fitsWindow {
+            frame.size.width = usableWidth
+            tableView.frame = frame
+        } else {
+            frame.size.width = columnsWidth
+            tableView.frame = frame
+            stabilizeManualScrollerLayout(columnsWidth: columnsWidth)
+        }
+        let horizontalScrollerIsHidden = scrollView.horizontalScroller?.isHidden != false
+        if (fitsWindow || horizontalScrollerIsHidden), scrollView.contentView.bounds.origin.x != 0 {
             var origin = scrollView.contentView.bounds.origin
             origin.x = 0
             scrollView.contentView.scroll(to: origin)
             scrollView.reflectScrolledClipView(scrollView.contentView)
         }
         refreshColumnResizeCursorRects()
+    }
+
+    private func stabilizeManualScrollerLayout(columnsWidth: CGFloat) {
+        for _ in 0..<3 {
+            scrollView.tile()
+            scrollView.layoutSubtreeIfNeeded()
+            let targetWidth = max(columnsWidth, floor(scrollView.contentSize.width))
+            guard abs(tableView.frame.width - targetWidth) > 0.5 else { return }
+            var frame = tableView.frame
+            frame.size.width = targetWidth
+            tableView.frame = frame
+        }
+        scrollView.tile()
+        scrollView.layoutSubtreeIfNeeded()
     }
 
     private var fittedColumnLayoutWidth: CGFloat {
