@@ -75,10 +75,76 @@ enum SearchCategory: String, CaseIterable, Codable {
         }
     }
 
+    var metadataQueryExpression: String? {
+        switch self {
+        case .all:
+            return nil
+        case .folder:
+            return "(kMDItemContentTypeTree == \"public.folder\" && !(kMDItemContentTypeTree == \"com.apple.application-bundle\"))"
+        case .application:
+            return "kMDItemContentTypeTree == \"com.apple.application-bundle\""
+        case .video:
+            return "kMDItemContentTypeTree == \"public.movie\""
+        case .audio:
+            return "kMDItemContentTypeTree == \"public.audio\""
+        case .image:
+            return "kMDItemContentTypeTree == \"public.image\""
+        case .document:
+            return "kMDItemContentTypeTree == \"public.document\""
+        case .presentation:
+            return "kMDItemContentTypeTree == \"public.presentation\""
+        case .word:
+            return Self.contentTypeQueryExpression([
+                "com.microsoft.word.doc",
+                "org.openxmlformats.wordprocessingml.document",
+                "org.openxmlformats.wordprocessingml.template"
+            ])
+        case .excel:
+            return Self.contentTypeQueryExpression([
+                "com.microsoft.excel.xls",
+                "org.openxmlformats.spreadsheetml.sheet",
+                "org.openxmlformats.spreadsheetml.template"
+            ])
+        case .pdf:
+            return "kMDItemContentType == \"com.adobe.pdf\""
+        case .archive:
+            return "kMDItemContentTypeTree == \"public.archive\""
+        }
+    }
+
     private static func contentTypePredicate(_ identifiers: [String], key: String) -> NSPredicate {
         NSCompoundPredicate(orPredicateWithSubpredicates: identifiers.map {
             NSPredicate(format: "%K == %@", key, $0)
         })
+    }
+
+    private static func contentTypeQueryExpression(_ identifiers: [String]) -> String {
+        "(" + identifiers.map { "kMDItemContentType == \"\($0)\"" }.joined(separator: " || ") + ")"
+    }
+}
+
+enum SearchMatchMode: String, CaseIterable, Codable {
+    case contains
+    case prefix
+    case exact
+
+    var title: String {
+        switch self {
+        case .contains: return String(localized: "Contains")
+        case .prefix: return String(localized: "Starts With")
+        case .exact: return String(localized: "Exact")
+        }
+    }
+
+    var toolTip: String {
+        switch self {
+        case .contains:
+            return String(localized: "Matches file names containing the entire entered text. Spaces are treated as part of the name.")
+        case .prefix:
+            return String(localized: "Matches file names starting with the entire entered text. Spaces are treated as part of the name.")
+        case .exact:
+            return String(localized: "Matches the entire file name or display name, ignoring letter case and diacritics.")
+        }
     }
 }
 
@@ -170,7 +236,7 @@ enum ColumnSizingMode: String, CaseIterable {
     var title: String {
         switch self {
         case .fitWindow: return String(localized: "Fit columns to window (No Horizontal Scrolling)")
-        case .manual: return String(localized: "Fixed column widths (Scroll When Needed)")
+        case .manual: return String(localized: "Manual column widths (Scroll When Needed)")
         }
     }
 }
@@ -410,6 +476,7 @@ enum SearchPreferences {
     private enum Key {
         static let category = "search.category"
         static let scopePath = "search.scopePath"
+        static let matchMode = "search.matchMode"
         static let sortMode = "results.sortMode"
         static let prioritizeFolderRules = "results.prioritizeFolderRules"
         static let foldersFirst = "results.foldersFirst"
@@ -429,6 +496,14 @@ enum SearchPreferences {
         set {
             if let newValue { UserDefaults.standard.set(newValue, forKey: Key.scopePath) }
             else { UserDefaults.standard.removeObject(forKey: Key.scopePath) }
+            notify()
+        }
+    }
+
+    static var matchMode: SearchMatchMode {
+        get { SearchMatchMode(rawValue: UserDefaults.standard.string(forKey: Key.matchMode) ?? "") ?? .contains }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: Key.matchMode)
             notify()
         }
     }

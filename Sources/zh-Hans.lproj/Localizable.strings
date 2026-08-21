@@ -12,6 +12,13 @@
 "Applications" = "应用程序";
 "Archives" = "压缩包";
 "Audio" = "音频";
+"Contains" = "包含";
+"Starts With" = "开头";
+"Exact" = "精确";
+"Name matching" = "名称匹配";
+"Matches file names containing the entire entered text. Spaces are treated as part of the name." = "文件名任意位置包含整段输入内容；空格也视为文件名的一部分。";
+"Matches file names starting with the entire entered text. Spaces are treated as part of the name." = "文件名以整段输入内容开头；空格也视为文件名的一部分。";
+"Matches the entire file name or display name, ignoring letter case and diacritics." = "精确匹配整个文件名或显示名称，不区分字母大小写和音调符号。";
 "Automatic sizing expands Path first and Name second. Manual sizing keeps your column widths and uses horizontal scrolling when needed." = "自动调整时会优先伸缩“路径”列，其次是“名称”列；手动调整会保留列宽，并在需要时使用横向滚动。";
 "Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Fixed widths use horizontal scrolling when needed." = "自动适应模式仍可调整列宽，其他列会自动补偿以避免横向滚动；名称和修改时间最后压缩，路径最先压缩。固定列宽模式会在需要时使用横向滚动。";
 "Available in Any Application" = "在任何应用中均可用";
@@ -40,6 +47,7 @@
 "Every button shows its saved shortcut. Click one and press a new combination; modifiers are shown live. Click elsewhere or press Escape to cancel." = "每个按钮都会显示已保存的快捷键。点击按钮后按下新的组合键，修饰键会实时显示；点击其他位置或按 Escape 可取消。";
 "Click a result-table header to choose the ordering. Folder priority and folders-first are independent options." = "点击结果表头选择排序方式；目录优先级和文件夹置顶是两个独立选项。";
 "Smart ordering puts common documents first. Clicking a result-table header switches to strict column ordering. Folder priority and folders-first remain independent." = "智能排序会将常用文档提前；点击结果表头后切换为严格的列排序。目录优先级和文件夹置顶仍作为独立选项。";
+"This is the default ordering used when each search first appears. Clicking a result-table header changes only the current results; the next search returns to this default. Folder priority and folders-first remain independent." = "这里设置每次搜索首次显示时采用的默认排序。点击结果表头只会改变当前结果；下次搜索会恢复此默认排序。目录优先级和文件夹置顶仍作为独立选项。";
 "File" = "文件";
 "FindAll Settings" = "FindAll 设置";
 "FindAll application icon" = "FindAll 应用图标";
@@ -147,7 +155,9 @@
 "Spotlight did not respond. Make sure Spotlight indexing is enabled." = "Spotlight 没有响应，请确认 Spotlight 索引已启用。";
 "Spotlight is taking longer than expected. Indexing may still be in progress." = "Spotlight 响应时间较长，索引可能仍在处理中。";
 "Spotlight search could not start." = "无法启动 Spotlight 搜索。";
+"Spotlight search timed out." = "Spotlight 搜索已超时。";
 "Starting Spotlight search…" = "正在启动 Spotlight 搜索…";
+"Showing first %lld results (limit reached)" = "结果已达上限，仅显示前 %lld 项";
 "Status: %@" = "状态：%@";
 "That shortcut is already assigned to “%@”." = "该快捷键已分配给“%@”。";
 "That shortcut is reserved by a standard macOS command." = "该快捷键由标准 macOS 命令保留。";
@@ -175,7 +185,8 @@
 "Use the default window size" = "使用默认窗口大小";
 "Fit columns to the window" = "列宽自动适应窗口";
 "Fit columns to window (No Horizontal Scrolling)" = "自动适应窗口（无横向滚动）";
-"Fixed column widths (Scroll When Needed)" = "固定列宽（必要时横向滚动）";
+"Manual column widths (Scroll When Needed)" = "手动列宽（必要时横向滚动）";
+"Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Manual column widths change only when you drag a divider; resizing the window does not redistribute them, and overflow uses horizontal scrolling." = "自动适应模式仍可调整列宽，其他列会自动补偿以避免横向滚动；名称和修改时间最后压缩，路径最先压缩。手动列宽只会在拖动列分隔线时改变；调整窗口大小不会重新分配列宽，超出部分使用横向滚动。";
 "Smart (Common Documents First)" = "智能排序（常用文档优先）";
 "File Manager" = "文件管理器";
 "Default file manager:" = "默认文件管理器：";

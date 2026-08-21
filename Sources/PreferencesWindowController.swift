@@ -255,7 +255,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private let shortcutMessageLabel = NSTextField(labelWithString: "")
     private let prioritizeFolderRulesButton = NSButton(checkboxWithTitle: String(localized: "Prioritize folder rules"), target: nil, action: nil)
     private let foldersFirstButton = NSButton(checkboxWithTitle: String(localized: "Keep folders above files within the same priority"), target: nil, action: nil)
-    private let sortModePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let sortModePopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let fullDiskAccessStatusLabel = NSTextField(labelWithString: "")
     private lazy var openFullDiskAccessSettingsButton = NSButton(
         title: String(localized: "Open Full Disk Access Settings"),
@@ -343,16 +343,10 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
         let heading = NSTextField(labelWithString: String(localized: "Result Ordering"))
         heading.font = .boldSystemFont(ofSize: 17)
-        let help = NSTextField(wrappingLabelWithString: String(localized: "Smart ordering puts common documents first. Clicking a result-table header switches to strict column ordering. Folder priority and folders-first remain independent."))
+        let help = NSTextField(wrappingLabelWithString: String(localized: "This is the default ordering used when each search first appears. Clicking a result-table header changes only the current results; the next search returns to this default. Folder priority and folders-first remain independent."))
         help.textColor = .secondaryLabelColor
 
-        let sortLabel = NSTextField(labelWithString: String(localized: "Ordering:"))
-        for mode in ResultSortMode.allCases {
-            sortModePopup.addItem(withTitle: mode.title)
-            sortModePopup.lastItem?.representedObject = mode.rawValue
-        }
-        sortModePopup.target = self
-        sortModePopup.action = #selector(sortModeChanged(_:))
+        let sortLabel = NSTextField(labelWithString: String(localized: "Default ordering:"))
         sortModePopup.widthAnchor.constraint(equalToConstant: 280).isActive = true
         let sortRow = NSStackView(views: [sortLabel, sortModePopup])
         sortRow.orientation = .horizontal
@@ -450,7 +444,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
         let layoutHeading = NSTextField(labelWithString: String(localized: "Result List Layout"))
         layoutHeading.font = .boldSystemFont(ofSize: 17)
-        let layoutHelp = NSTextField(wrappingLabelWithString: String(localized: "Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Fixed widths use horizontal scrolling when needed."))
+        let layoutHelp = NSTextField(wrappingLabelWithString: String(localized: "Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Manual column widths change only when you drag a divider; resizing the window does not redistribute them, and overflow uses horizontal scrolling."))
         layoutHelp.textColor = .secondaryLabelColor
         let sizingLabel = NSTextField(labelWithString: String(localized: "Column widths:"))
         columnSizingPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
@@ -656,7 +650,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func refreshSearchSettings() {
         folderRules = SearchPreferences.folderRules
-        selectItem(in: sortModePopup, representedObject: SearchPreferences.sortMode.rawValue)
+        rebuildSortModeMenu()
         prioritizeFolderRulesButton.state = SearchPreferences.prioritizeFolderRules ? .on : .off
         foldersFirstButton.state = SearchPreferences.foldersFirst ? .on : .off
         refreshFullDiskAccessStatus()
@@ -682,6 +676,16 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             selectedTitle: selectedMode.title,
             choices: WindowStartupSize.allCases.map { ($0.title, $0.rawValue, $0 == selectedMode) },
             action: #selector(startupWindowSizeChanged(_:))
+        )
+    }
+
+    private func rebuildSortModeMenu() {
+        let selectedMode = SearchPreferences.sortMode
+        rebuildPullDown(
+            sortModePopup,
+            selectedTitle: selectedMode.title,
+            choices: ResultSortMode.allCases.map { ($0.title, $0.rawValue, $0 == selectedMode) },
+            action: #selector(sortModeChanged(_:))
         )
     }
 
@@ -881,10 +885,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         SearchPreferences.prioritizeFolderRules = sender.state == .on
     }
 
-    @objc private func sortModeChanged(_ sender: NSPopUpButton) {
-        guard let rawValue = sender.selectedItem?.representedObject as? String,
+    @objc private func sortModeChanged(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
               let mode = ResultSortMode(rawValue: rawValue) else { return }
         SearchPreferences.sortMode = mode
+        refreshSearchSettings()
     }
 
     @objc private func foldersFirstChanged(_ sender: NSButton) {

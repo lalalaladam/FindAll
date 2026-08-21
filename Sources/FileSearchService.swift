@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 
 struct SearchResult: Hashable {
@@ -15,30 +16,34 @@ struct SearchRequest: Equatable {
     let text: String
     let category: SearchCategory
     let scopePath: String?
+    let matchMode: SearchMatchMode
 }
 
 enum SearchFailure {
     case couldNotStart
+    case timedOut
 }
 
 enum SearchUpdate {
     case idle
     case started
-    case gathering(Int)
-    case delayed
-    case results([SearchResult])
+    case results([SearchResult], reachedLimit: Bool)
     case failed(SearchFailure)
 }
 
-final class FileSearchService: NSObject {
+final class FileSearchService {
     var onUpdate: ((SearchUpdate) -> Void)?
 
     private let resultLimit = 2_000
     private let queryTimeout: TimeInterval = 30
+    private let queryQueue = DispatchQueue(
+        label: "com.lalalaladam.FindAll.metadata-query",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
     private var generation = 0
     private var timeoutWorkItem: DispatchWorkItem?
-    private var activeQuery: NSMetadataQuery?
-    private var notificationTokens: [NSObjectProtocol] = []
+    private var activeQuery: MDQuery?
 
     func search(_ request: SearchRequest) {
         precondition(Thread.isMainThread)
@@ -52,7 +57,12 @@ final class FileSearchService: NSObject {
             return
         }
 
-        let normalizedRequest = SearchRequest(text: trimmed, category: request.category, scopePath: request.scopePath)
+        let normalizedRequest = SearchRequest(
+            text: trimmed,
+            category: request.category,
+            scopePath: request.scopePath,
+            matchMode: request.matchMode
+        )
         startQuery(normalizedRequest, generation: currentGeneration)
     }
 
@@ -65,193 +75,169 @@ final class FileSearchService: NSObject {
 
     private func startQuery(_ request: SearchRequest, generation: Int) {
         guard generation == self.generation else { return }
-        let terms = request.text.split(whereSeparator: \Character.isWhitespace).map(String.init)
-        guard !terms.isEmpty else {
-            onUpdate?(.idle)
-            return
-        }
-
-        let query = NSMetadataQuery()
-        query.predicate = Self.makePredicate(terms: terms, category: request.category)
-        query.notificationBatchingInterval = 0.2
-        if let scopePath = request.scopePath {
-            // Foundation accepts file URLs or path strings here. A path string avoids
-            // Swift/Objective-C bridging issues seen with search-scope values on macOS.
-            query.searchScopes = [URL(fileURLWithPath: scopePath).standardizedFileURL.path]
-        }
-        // An empty/default scope searches all locations. Do not assign
-        // NSMetadataQueryLocalComputerScope: on the affected macOS runtime,
-        // setSearchScopes: raises NSInvalidArgumentException for that value.
-
-        activeQuery = query
-        observe(query, generation: generation)
-        NSLog(
-            "FindAll Spotlight query %d starting (terms=%d, category=%@, customScope=%@)",
-            generation,
-            terms.count,
-            request.category.rawValue,
-            request.scopePath == nil ? "no" : "yes"
-        )
-        onUpdate?(.started)
-        guard query.start() else {
-            NSLog("FindAll Spotlight query %d failed to start", generation)
-            stopActiveQuery()
+        let expression = Self.makeQueryExpression(for: request)
+        guard let query = MDQueryCreate(kCFAllocatorDefault, expression as NSString, nil, nil) else {
             onUpdate?(.failed(.couldNotStart))
             return
         }
+
+        MDQuerySetMaxCount(query, resultLimit)
+        let scopes: NSArray
+        if let scopePath = request.scopePath {
+            scopes = [URL(fileURLWithPath: scopePath).standardizedFileURL.path]
+        } else {
+            scopes = [kMDQueryScopeAllIndexed!]
+        }
+        MDQuerySetSearchScope(query, scopes, 0)
+
+        activeQuery = query
+        NSLog(
+            "FindAll bounded Spotlight query %d starting (mode=%@, category=%@, customScope=%@, limit=%d)",
+            generation,
+            request.matchMode.rawValue,
+            request.category.rawValue,
+            request.scopePath == nil ? "no" : "yes",
+            resultLimit
+        )
+        onUpdate?(.started)
+
         let timeoutWorkItem = DispatchWorkItem { [weak self, weak query] in
-            guard let self, let query, generation == self.generation, query === self.activeQuery else { return }
-            self.handleTimeout(for: query, generation: generation)
+            guard let self, let query, self.isCurrent(query, generation: generation) else { return }
+            self.generation += 1
+            self.stopActiveQuery()
+            NSLog("FindAll bounded Spotlight query %d timed out", generation)
+            self.onUpdate?(.failed(.timedOut))
         }
         self.timeoutWorkItem = timeoutWorkItem
         DispatchQueue.main.asyncAfter(deadline: .now() + queryTimeout, execute: timeoutWorkItem)
-    }
 
-    private static func makePredicate(terms: [String], category: SearchCategory) -> NSPredicate {
-        let namePredicates = terms.map { term in
-            let pattern = "*\(escapeLikePattern(term))*"
-            return NSCompoundPredicate(orPredicateWithSubpredicates: [
-                NSPredicate(format: "%K LIKE[cd] %@", NSMetadataItemFSNameKey, pattern),
-                NSPredicate(format: "%K LIKE[cd] %@", NSMetadataItemDisplayNameKey, pattern)
-            ])
-        }
-        var predicates: [NSPredicate] = namePredicates
-        if let categoryPredicate = category.metadataPredicate {
-            predicates.append(categoryPredicate)
-        }
-        // NSMetadataQuery rejects an AND compound predicate containing only one
-        // subpredicate. This is the common single-term + All category case.
-        if predicates.count == 1, let predicate = predicates.first {
-            return predicate
-        }
-        return NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-    }
-
-    private static func escapeLikePattern(_ value: String) -> String {
-        value.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "*", with: "\\*")
-            .replacingOccurrences(of: "?", with: "\\?")
-    }
-
-    private func observe(_ query: NSMetadataQuery, generation: Int) {
-        let center = NotificationCenter.default
-        let started = center.addObserver(
-            forName: NSNotification.Name.NSMetadataQueryDidStartGathering,
-            object: query,
-            queue: .main
-        ) { [weak self, weak query] _ in
-            guard let self, let query, self.isCurrent(query, generation: generation) else { return }
-            NSLog("FindAll Spotlight query %d began gathering", generation)
-            self.onUpdate?(.gathering(0))
-        }
-        let progress = center.addObserver(
-            forName: NSNotification.Name.NSMetadataQueryGatheringProgress,
-            object: query,
-            queue: .main
-        ) { [weak self, weak query] _ in
-            guard let self, let query, self.isCurrent(query, generation: generation) else { return }
-            self.onUpdate?(.gathering(min(query.resultCount, self.resultLimit)))
-        }
-        let finished = center.addObserver(
-            forName: NSNotification.Name.NSMetadataQueryDidFinishGathering,
-            object: query,
-            queue: .main
-        ) { [weak self, weak query] _ in
-            guard let self, let query, self.isCurrent(query, generation: generation) else { return }
-            self.timeoutWorkItem?.cancel()
-            self.timeoutWorkItem = nil
-            NSLog("FindAll Spotlight query %d finished with %d candidates", generation, query.resultCount)
-            self.publishResults(from: query, generation: generation)
-        }
-        let updated = center.addObserver(
-            forName: NSNotification.Name.NSMetadataQueryDidUpdate,
-            object: query,
-            queue: .main
-        ) { [weak self, weak query] _ in
-            guard let self, let query, self.isCurrent(query, generation: generation), !query.isGathering else { return }
-            self.publishResults(from: query, generation: generation)
-        }
-        notificationTokens = [started, progress, finished, updated]
-    }
-
-    private func isCurrent(_ query: NSMetadataQuery, generation: Int) -> Bool {
-        generation == self.generation && query === activeQuery
-    }
-
-    private func handleTimeout(for query: NSMetadataQuery, generation: Int) {
-        let resultCount = query.resultCount
-        NSLog(
-            "FindAll Spotlight query %d timed out (started=%@, gathering=%@, candidates=%d)",
-            generation,
-            query.isStarted ? "yes" : "no",
-            query.isGathering ? "yes" : "no",
-            resultCount
-        )
-        if resultCount > 0 {
-            publishResults(from: query, generation: generation)
-        } else {
-            // A cold or rebuilding Spotlight index can legitimately take longer.
-            // Keep the live query running so a later completion can still publish.
-            timeoutWorkItem = nil
-            onUpdate?(.delayed)
+        queryQueue.async { [weak self] in
+            let started = MDQueryExecute(query, CFOptionFlags(kMDQuerySynchronous.rawValue))
+            let count = max(0, Int(MDQueryGetResultCount(query)))
+            let reachedLimit = count >= (self?.resultLimit ?? 2_000)
+            let results = started ? Self.makeResults(from: query, count: count) : []
+            DispatchQueue.main.async { [weak self] in
+                self?.finishQuery(
+                    query,
+                    generation: generation,
+                    started: started,
+                    results: results,
+                    reachedLimit: reachedLimit
+                )
+            }
         }
     }
 
-    private func publishResults(from query: NSMetadataQuery, generation: Int) {
+    private func finishQuery(
+        _ query: MDQuery,
+        generation: Int,
+        started: Bool,
+        results: [SearchResult],
+        reachedLimit: Bool
+    ) {
         guard isCurrent(query, generation: generation) else { return }
-        query.disableUpdates()
-        defer {
-            if query === activeQuery { query.enableUpdates() }
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+        activeQuery = nil
+        guard started else {
+            NSLog("FindAll bounded Spotlight query %d failed to execute", generation)
+            onUpdate?(.failed(.couldNotStart))
+            return
         }
-
-        let count = min(query.resultCount, resultLimit)
-        var results: [SearchResult] = []
-        results.reserveCapacity(count)
-        for index in 0..<count {
-            guard let item = query.result(at: index) as? NSMetadataItem,
-                  let result = Self.makeResult(item) else { continue }
-            results.append(result)
-        }
-        onUpdate?(.results(results))
+        NSLog(
+            "FindAll bounded Spotlight query %d finished with %d results (limitReached=%@)",
+            generation,
+            results.count,
+            reachedLimit ? "yes" : "no"
+        )
+        onUpdate?(.results(results, reachedLimit: reachedLimit))
     }
 
-    private static func makeResult(_ item: NSMetadataItem) -> SearchResult? {
-        let url: URL?
-        if let itemURL = item.value(forAttribute: NSMetadataItemURLKey) as? URL {
-            url = itemURL
-        } else if let itemURL = item.value(forAttribute: NSMetadataItemURLKey) as? NSURL {
-            url = itemURL as URL
-        } else if let path = item.value(forAttribute: NSMetadataItemPathKey) as? String {
-            url = URL(fileURLWithPath: path)
-        } else {
-            url = nil
-        }
-        guard let url else { return nil }
-
-        let displayName = item.value(forAttribute: NSMetadataItemDisplayNameKey) as? String
-            ?? item.value(forAttribute: NSMetadataItemFSNameKey) as? String
-            ?? url.lastPathComponent
-        let typeTree = item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String] ?? []
-        return SearchResult(
-            url: url,
-            displayName: displayName,
-            kind: item.value(forAttribute: NSMetadataItemKindKey) as? String ?? "",
-            size: (item.value(forAttribute: NSMetadataItemFSSizeKey) as? NSNumber)?.int64Value,
-            modifiedAt: item.value(forAttribute: NSMetadataItemFSContentChangeDateKey) as? Date,
-            isDirectory: typeTree.contains("public.folder")
-        )
+    private func isCurrent(_ query: MDQuery, generation: Int) -> Bool {
+        generation == self.generation && activeQuery.map { query === $0 } == true
     }
 
     private func stopActiveQuery() {
         timeoutWorkItem?.cancel()
         timeoutWorkItem = nil
-        notificationTokens.forEach(NotificationCenter.default.removeObserver)
-        notificationTokens.removeAll()
-        activeQuery?.stop()
+        guard let query = activeQuery else { return }
         activeQuery = nil
+        queryQueue.async {
+            MDQueryStop(query)
+        }
+    }
+
+    private static func makeQueryExpression(for request: SearchRequest) -> String {
+        let escaped = escapeQueryValue(request.text)
+        let pattern: String
+        switch request.matchMode {
+        case .contains:
+            pattern = "*\(escaped)*"
+        case .prefix:
+            pattern = "\(escaped)*"
+        case .exact:
+            pattern = escaped
+        }
+        let nameExpression = "(kMDItemFSName == \"\(pattern)\"cd || kMDItemDisplayName == \"\(pattern)\"cd)"
+        var expressions = [nameExpression]
+        if let categoryExpression = request.category.metadataQueryExpression {
+            expressions.append(categoryExpression)
+        }
+        return expressions.count == 1
+            ? expressions[0]
+            : "(" + expressions.joined(separator: " && ") + ")"
+    }
+
+    private static func escapeQueryValue(_ value: String) -> String {
+        value.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "*", with: "\\*")
+            .replacingOccurrences(of: "?", with: "\\?")
+    }
+
+    private static func makeResults(from query: MDQuery, count: Int) -> [SearchResult] {
+        var results: [SearchResult] = []
+        results.reserveCapacity(count)
+        for index in 0..<count {
+            guard let rawResult = MDQueryGetResultAtIndex(query, index) else { continue }
+            let item = unsafeBitCast(rawResult, to: MDItem.self)
+            if let result = makeResult(item) {
+                results.append(result)
+            }
+        }
+        return results
+    }
+
+    private static func makeResult(_ item: MDItem) -> SearchResult? {
+        let names: NSArray = [
+            kMDItemPath!,
+            kMDItemDisplayName!,
+            kMDItemFSName!,
+            kMDItemKind!,
+            kMDItemFSSize!,
+            kMDItemContentModificationDate!,
+            kMDItemContentTypeTree!
+        ]
+        guard let attributes = MDItemCopyAttributes(item, names) as? [String: Any],
+              let path = attributes[kMDItemPath as String] as? String else { return nil }
+        let url = URL(fileURLWithPath: path)
+        let displayName = attributes[kMDItemDisplayName as String] as? String
+            ?? attributes[kMDItemFSName as String] as? String
+            ?? url.lastPathComponent
+        let typeTree = attributes[kMDItemContentTypeTree as String] as? [String] ?? []
+        return SearchResult(
+            url: url,
+            displayName: displayName,
+            kind: attributes[kMDItemKind as String] as? String ?? "",
+            size: (attributes[kMDItemFSSize as String] as? NSNumber)?.int64Value,
+            modifiedAt: attributes[kMDItemContentModificationDate as String] as? Date,
+            isDirectory: typeTree.contains("public.folder")
+        )
     }
 
     deinit {
-        stopActiveQuery()
+        if let query = activeQuery {
+            MDQueryStop(query)
+        }
     }
 }

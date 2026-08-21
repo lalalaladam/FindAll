@@ -3,6 +3,12 @@ import QuickLookUI
 
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
     private let searchField = NSSearchField()
+    private let matchModeControl = NSSegmentedControl(
+        labels: SearchMatchMode.allCases.map(\.title),
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
     private let scopePopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let categoryPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let prioritizeFoldersButton = NSButton(checkboxWithTitle: String(localized: "Prioritize folder rules"), target: nil, action: nil)
@@ -29,6 +35,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var isSynchronizingSort = false
     private var isFilterRefreshScheduled = false
     private var activeColumnSizingMode = WindowPreferences.columnSizingMode
+    private var activeSortMode = SearchPreferences.sortMode
+    private var observedDefaultSortMode = SearchPreferences.sortMode
 
     private static let fullDiskAccessNoticeKey = "privacy.fullDiskAccessNoticeShown.v1"
     private static let defaultColumnOrder = ["name", "path", "kind", "size", "modified"]
@@ -122,6 +130,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         searchField.action = #selector(executeSearch(_:))
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
+        matchModeControl.controlSize = .regular
+        matchModeControl.segmentStyle = .rounded
+        matchModeControl.target = self
+        matchModeControl.action = #selector(matchModeChanged(_:))
+        for (index, mode) in SearchMatchMode.allCases.enumerated() {
+            matchModeControl.setToolTip(mode.toolTip, forSegment: index)
+        }
+        matchModeControl.setAccessibilityLabel(String(localized: "Name matching"))
+        matchModeControl.translatesAutoresizingMaskIntoConstraints = false
+
         configureFilterControls()
 
         spinner.style = .spinning
@@ -162,17 +180,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         statusBar.spacing = 8
         statusBar.translatesAutoresizingMaskIntoConstraints = false
 
-        [searchField, filterBar, scrollView, statusBar].forEach(content.addSubview)
+        [searchField, matchModeControl, filterBar, scrollView, statusBar].forEach(content.addSubview)
 
         NSLayoutConstraint.activate([
             searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: 7),
             searchField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
-            searchField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            searchField.trailingAnchor.constraint(equalTo: matchModeControl.leadingAnchor, constant: -8),
             searchField.heightAnchor.constraint(equalToConstant: 32),
+
+            matchModeControl.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
+            matchModeControl.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            matchModeControl.widthAnchor.constraint(equalToConstant: 230),
+            matchModeControl.heightAnchor.constraint(equalToConstant: 28),
 
             filterBar.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 5),
             filterBar.leadingAnchor.constraint(equalTo: searchField.leadingAnchor),
-            filterBar.trailingAnchor.constraint(equalTo: searchField.trailingAnchor),
+            filterBar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             filterBar.heightAnchor.constraint(equalToConstant: 27),
 
             scrollView.topAnchor.constraint(equalTo: filterBar.bottomAnchor, constant: 5),
@@ -310,6 +333,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         rebuildCategoryMenu()
         prioritizeFoldersButton.state = SearchPreferences.prioritizeFolderRules ? .on : .off
         foldersFirstButton.state = SearchPreferences.foldersFirst ? .on : .off
+        matchModeControl.selectedSegment = SearchMatchMode.allCases.firstIndex(of: SearchPreferences.matchMode) ?? 0
         synchronizeTableSortDescriptor()
     }
 
@@ -417,8 +441,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private func layoutColumns(initialLayout: Bool = false) {
         guard !isAdjustingColumns, !tableView.tableColumns.isEmpty else { return }
         let fitsWindow = WindowPreferences.columnSizingMode == .fitWindow
-        scrollView.hasHorizontalScroller = !fitsWindow
+        let desiredScrollerStyle: NSScroller.Style = fitsWindow ? NSScroller.preferredScrollerStyle : .legacy
+        if scrollView.scrollerStyle != desiredScrollerStyle {
+            scrollView.scrollerStyle = desiredScrollerStyle
+        }
+        var contentInsets = scrollView.contentInsets
+        contentInsets.bottom = 0
+        scrollView.contentInsets = contentInsets
+        if fitsWindow, scrollView.hasHorizontalScroller {
+            scrollView.hasHorizontalScroller = false
+        }
         scrollView.tile()
+        let currentColumnsWidth = tableView.tableColumns.reduce(0) { $0 + $1.width }
+        let needsHorizontalScroller = !fitsWindow
+            && currentColumnsWidth > floor(scrollView.contentSize.width) + 0.5
+        if scrollView.hasHorizontalScroller != needsHorizontalScroller {
+            scrollView.hasHorizontalScroller = needsHorizontalScroller
+            scrollView.tile()
+        }
         let viewportWidth = floor(scrollView.contentSize.width)
         guard viewportWidth > 0 else { return }
         let usableWidth = fitsWindow ? fittedColumnLayoutWidth : viewportWidth
@@ -441,8 +481,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         var frame = tableView.frame
         frame.size.width = fitsWindow
             ? usableWidth
-            : max(viewportWidth, columnsWidth + overlayScrollerSafetyWidth)
+            : max(viewportWidth, columnsWidth)
         tableView.frame = frame
+        if !scrollView.hasHorizontalScroller, scrollView.contentView.bounds.origin.x != 0 {
+            var origin = scrollView.contentView.bounds.origin
+            origin.x = 0
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
         refreshColumnResizeCursorRects()
     }
 
@@ -452,11 +498,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         guard scrollView.hasVerticalScroller else { return max(0, viewportWidth) }
         let reservedWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollView.scrollerStyle) + 4
         return max(0, viewportWidth - reservedWidth)
-    }
-
-    private var overlayScrollerSafetyWidth: CGFloat {
-        guard scrollView.hasVerticalScroller, scrollView.scrollerStyle == .overlay else { return 0 }
-        return NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay) + 4
     }
 
     private func fitColumns(to targetWidth: CGFloat, protecting protectedIdentifier: String?) {
@@ -854,11 +895,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         case ("modified", false): mode = .modifiedDescending
         default: return
         }
-        SearchPreferences.sortMode = mode
+        activeSortMode = mode
+        applyRanking()
     }
 
     private func synchronizeTableSortDescriptor() {
-        let mode = SearchPreferences.sortMode
+        let mode = activeSortMode
         let descriptor: NSSortDescriptor?
         switch mode {
         case .smart: descriptor = nil
@@ -891,22 +933,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 self.tableView.deselectAll(nil)
                 self.spinner.startAnimation(nil)
                 self.statusLabel.stringValue = String(localized: "Starting Spotlight search…")
-            case let .gathering(count):
-                self.spinner.startAnimation(nil)
-                self.statusLabel.stringValue = String.localizedStringWithFormat(
-                    String(localized: "Searching… %lld results"),
-                    Int64(count)
-                )
-            case let .results(results):
+            case let .results(results, reachedLimit):
                 self.candidates = results
                 self.applyRanking()
                 self.spinner.stopAnimation(nil)
-                self.statusLabel.stringValue = self.results.isEmpty
-                    ? String(localized: "No matching Spotlight results. Protected locations may require Full Disk Access.")
-                    : String.localizedStringWithFormat(String(localized: "%lld results"), Int64(self.results.count))
-            case .delayed:
-                self.spinner.startAnimation(nil)
-                self.statusLabel.stringValue = String(localized: "Spotlight is taking longer than expected. Indexing may still be in progress.")
+                if reachedLimit {
+                    self.statusLabel.stringValue = String.localizedStringWithFormat(
+                        String(localized: "Showing first %lld results (limit reached)"),
+                        Int64(self.results.count)
+                    )
+                } else {
+                    self.statusLabel.stringValue = self.results.isEmpty
+                        ? String(localized: "No matching Spotlight results. Protected locations may require Full Disk Access.")
+                        : String.localizedStringWithFormat(String(localized: "%lld results"), Int64(self.results.count))
+                }
             case let .failed(failure):
                 self.candidates = []
                 self.applyRanking()
@@ -914,16 +954,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 switch failure {
                 case .couldNotStart:
                     self.statusLabel.stringValue = String(localized: "Spotlight search could not start.")
+                case .timedOut:
+                    self.statusLabel.stringValue = String(localized: "Spotlight search timed out.")
                 }
             }
         }
     }
 
     private func currentRequest() -> SearchRequest {
-        SearchRequest(text: searchField.stringValue, category: SearchPreferences.category, scopePath: SearchPreferences.scopePath)
+        SearchRequest(
+            text: searchField.stringValue,
+            category: SearchPreferences.category,
+            scopePath: SearchPreferences.scopePath,
+            matchMode: SearchPreferences.matchMode
+        )
     }
 
     private func performSearch() {
+        activeSortMode = SearchPreferences.sortMode
+        synchronizeTableSortDescriptor()
         let request = currentRequest()
         lastSearchRequest = request
         searchService.search(request)
@@ -931,6 +980,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     private func preferencesDidChange() {
         scheduleFilterControlsRefresh()
+        let defaultSortMode = SearchPreferences.sortMode
+        if defaultSortMode != observedDefaultSortMode {
+            observedDefaultSortMode = defaultSortMode
+            activeSortMode = defaultSortMode
+            synchronizeTableSortDescriptor()
+        }
         let request = currentRequest()
         if !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            request != lastSearchRequest {
@@ -953,7 +1008,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private func applyRanking() {
         let selectedURLs = Set(self.selectedURLs.map(\.standardizedFileURL))
         let scrollOrigin = scrollView.contentView.bounds.origin
-        let sortMode = SearchPreferences.sortMode
+        let sortMode = activeSortMode
         let foldersFirst = SearchPreferences.foldersFirst
         let prioritizeFolderRules = SearchPreferences.prioritizeFolderRules
         let folderRules = SearchPreferences.folderRules
@@ -1035,6 +1090,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     @objc private func executeSearch(_ sender: Any?) { performSearch() }
+
+    @objc private func matchModeChanged(_ sender: NSSegmentedControl) {
+        guard SearchMatchMode.allCases.indices.contains(sender.selectedSegment) else { return }
+        SearchPreferences.matchMode = SearchMatchMode.allCases[sender.selectedSegment]
+    }
 
     @objc private func categoryMenuItemSelected(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
@@ -1430,12 +1490,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     private func windowPreferencesDidChange() {
         let newColumnSizingMode = WindowPreferences.columnSizingMode
-        if newColumnSizingMode != activeColumnSizingMode {
+        let columnSizingModeChanged = newColumnSizingMode != activeColumnSizingMode
+        if columnSizingModeChanged {
+            saveColumnWidths(forKey: WindowPreferences.columnWidthsKey)
             activeColumnSizingMode = newColumnSizingMode
-            if newColumnSizingMode == .manual {
-                restoreColumnWidths(forKey: WindowPreferences.columnWidthsKey)
-            } else {
-                hasRestoredFittedColumnLayout = false
+            if newColumnSizingMode == .fitWindow {
+                hasRestoredFittedColumnLayout = true
             }
         }
         if let window {
@@ -1443,7 +1503,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             if WindowPreferences.placement == .remember { WindowPreferences.savedOrigin = window.frame.origin }
         }
         restoreWindowBehavior()
-        layoutColumns(initialLayout: newColumnSizingMode == .fitWindow && !hasRestoredFittedColumnLayout)
+        let shouldRestoreFittedLayout = !columnSizingModeChanged
+            && newColumnSizingMode == .fitWindow
+            && !hasRestoredFittedColumnLayout
+        layoutColumns(initialLayout: shouldRestoreFittedLayout)
+        if columnSizingModeChanged {
+            if newColumnSizingMode == .fitWindow {
+                saveFittedColumnLayout()
+            } else {
+                saveColumnWidths(forKey: WindowPreferences.columnWidthsKey)
+            }
+        }
     }
 }
 
