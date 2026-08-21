@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 enum CommandID: String, CaseIterable {
     case globalToggle
@@ -241,6 +242,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private let shortcutMessageLabel = NSTextField(labelWithString: "")
     private let prioritizeFolderRulesButton = NSButton(checkboxWithTitle: String(localized: "Prioritize folder rules"), target: nil, action: nil)
     private let foldersFirstButton = NSButton(checkboxWithTitle: String(localized: "Keep folders above files within the same priority"), target: nil, action: nil)
+    private let sortModePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let fullDiskAccessStatusLabel = NSTextField(labelWithString: "")
     private lazy var openFullDiskAccessSettingsButton = NSButton(
         title: String(localized: "Open Full Disk Access Settings"),
@@ -249,6 +251,13 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     )
     private let rulesTableView = NSTableView()
     private var folderRules: [FolderRule] = []
+    private var windowPreferencesObserver: NSObjectProtocol?
+    private let placementPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let startupSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let columnSizingPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let settingsKeepOnTopButton = NSButton(checkboxWithTitle: String(localized: "Keep on top in current Space"), target: nil, action: nil)
+    private let settingsAllSpacesButton = NSButton(checkboxWithTitle: String(localized: "Show on all Spaces"), target: nil, action: nil)
+    private let fileManagerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
 
     init(onChange: @escaping () -> Void) {
         self.onShortcutChange = onChange
@@ -264,9 +273,21 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         window.delegate = self
         buildInterface()
         refreshSearchSettings()
+        refreshWindowSettings()
+        windowPreferencesObserver = NotificationCenter.default.addObserver(
+            forName: WindowPreferences.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshWindowSettings()
+        }
     }
 
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        if let windowPreferencesObserver { NotificationCenter.default.removeObserver(windowPreferencesObserver) }
+    }
 
     private func buildInterface() {
         guard let content = window?.contentView else { return }
@@ -283,6 +304,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         shortcutsTab.view = makeShortcutsView()
         tabView.addTabViewItem(shortcutsTab)
 
+        let windowTab = NSTabViewItem(identifier: "window")
+        windowTab.label = String(localized: "Window & Layout")
+        windowTab.view = makeWindowSettingsView()
+        tabView.addTabViewItem(windowTab)
+
         content.addSubview(tabView)
         NSLayoutConstraint.activate([
             tabView.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
@@ -296,14 +322,27 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         let view = NSView()
         let accessHeading = NSTextField(labelWithString: String(localized: "Full Disk Access"))
         accessHeading.font = .boldSystemFont(ofSize: 14)
-        let accessHelp = NSTextField(wrappingLabelWithString: String(localized: "Full Disk Access is required for Spotlight searches. Without it, searches return no results. Enable FindAll in System Settings, then restart the app."))
+        let accessHelp = NSTextField(wrappingLabelWithString: String(localized: "Full Disk Access lets FindAll include more protected locations in Spotlight results. Enable it in System Settings, then restart the app."))
         accessHelp.textColor = .secondaryLabelColor
         fullDiskAccessStatusLabel.font = .systemFont(ofSize: 12, weight: .medium)
 
         let heading = NSTextField(labelWithString: String(localized: "Result Ordering"))
         heading.font = .boldSystemFont(ofSize: 17)
-        let help = NSTextField(wrappingLabelWithString: String(localized: "Click a result-table header to choose the ordering. Folder priority and folders-first are independent options."))
+        let help = NSTextField(wrappingLabelWithString: String(localized: "Smart ordering puts common documents first. Clicking a result-table header switches to strict column ordering. Folder priority and folders-first remain independent."))
         help.textColor = .secondaryLabelColor
+
+        let sortLabel = NSTextField(labelWithString: String(localized: "Ordering:"))
+        for mode in ResultSortMode.allCases {
+            sortModePopup.addItem(withTitle: mode.title)
+            sortModePopup.lastItem?.representedObject = mode.rawValue
+        }
+        sortModePopup.target = self
+        sortModePopup.action = #selector(sortModeChanged(_:))
+        sortModePopup.widthAnchor.constraint(equalToConstant: 280).isActive = true
+        let sortRow = NSStackView(views: [sortLabel, sortModePopup])
+        sortRow.orientation = .horizontal
+        sortRow.alignment = .centerY
+        sortRow.spacing = 12
 
         prioritizeFolderRulesButton.target = self
         prioritizeFolderRulesButton.action = #selector(prioritizeFolderRulesChanged(_:))
@@ -329,7 +368,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        [accessHeading, accessHelp, fullDiskAccessStatusLabel, openFullDiskAccessSettingsButton, heading, help, prioritizeFolderRulesButton, foldersFirstButton, folderHeading, folderHelp, scrollView, buttons].forEach {
+        [accessHeading, accessHelp, fullDiskAccessStatusLabel, openFullDiskAccessSettingsButton, heading, help, sortRow, prioritizeFolderRulesButton, foldersFirstButton, folderHeading, folderHelp, scrollView, buttons].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
@@ -348,7 +387,9 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             help.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
             help.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
             help.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            prioritizeFolderRulesButton.topAnchor.constraint(equalTo: help.bottomAnchor, constant: 14),
+            sortRow.topAnchor.constraint(equalTo: help.bottomAnchor, constant: 12),
+            sortRow.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            prioritizeFolderRulesButton.topAnchor.constraint(equalTo: sortRow.bottomAnchor, constant: 12),
             prioritizeFolderRulesButton.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
             foldersFirstButton.topAnchor.constraint(equalTo: prioritizeFolderRulesButton.bottomAnchor, constant: 8),
             foldersFirstButton.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
@@ -360,10 +401,110 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             scrollView.topAnchor.constraint(equalTo: folderHelp.bottomAnchor, constant: 10),
             scrollView.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            scrollView.heightAnchor.constraint(equalToConstant: 185),
+            scrollView.heightAnchor.constraint(equalToConstant: 155),
             buttons.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 10),
             buttons.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
             buttons.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -16)
+        ])
+        return view
+    }
+
+    private func makeWindowSettingsView() -> NSView {
+        let view = NSView()
+        let windowHeading = NSTextField(labelWithString: String(localized: "Window Presentation"))
+        windowHeading.font = .boldSystemFont(ofSize: 17)
+        let placementLabel = NSTextField(labelWithString: String(localized: "When showing FindAll:"))
+
+        for placement in WindowPlacement.allCases {
+            placementPopup.addItem(withTitle: placement.title)
+            placementPopup.lastItem?.representedObject = placement.rawValue
+        }
+        placementPopup.target = self
+        placementPopup.action = #selector(windowPlacementChanged(_:))
+        placementPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
+
+        let startupSizeLabel = NSTextField(labelWithString: String(localized: "At app launch:"))
+        for mode in WindowStartupSize.allCases {
+            startupSizePopup.addItem(withTitle: mode.title)
+            startupSizePopup.lastItem?.representedObject = mode.rawValue
+        }
+        startupSizePopup.target = self
+        startupSizePopup.action = #selector(startupWindowSizeChanged(_:))
+        startupSizePopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        let resetWindowSize = NSButton(title: String(localized: "Restore Default Window Size Now"), target: self, action: #selector(resetWindowSize(_:)))
+        settingsKeepOnTopButton.target = self
+        settingsKeepOnTopButton.action = #selector(settingsWindowBehaviorChanged(_:))
+        settingsAllSpacesButton.target = self
+        settingsAllSpacesButton.action = #selector(settingsWindowBehaviorChanged(_:))
+
+        let layoutHeading = NSTextField(labelWithString: String(localized: "Result List Layout"))
+        layoutHeading.font = .boldSystemFont(ofSize: 17)
+        let layoutHelp = NSTextField(wrappingLabelWithString: String(localized: "Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Fixed widths use horizontal scrolling when needed."))
+        layoutHelp.textColor = .secondaryLabelColor
+        let sizingLabel = NSTextField(labelWithString: String(localized: "Column widths:"))
+        for mode in ColumnSizingMode.allCases {
+            columnSizingPopup.addItem(withTitle: mode.title)
+            columnSizingPopup.lastItem?.representedObject = mode.rawValue
+        }
+        columnSizingPopup.target = self
+        columnSizingPopup.action = #selector(columnSizingChanged(_:))
+        columnSizingPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        let resetLayout = NSButton(title: String(localized: "Restore Default Column Layout"), target: self, action: #selector(resetColumnLayout(_:)))
+
+        let fileManagerHeading = NSTextField(labelWithString: String(localized: "File Manager"))
+        fileManagerHeading.font = .boldSystemFont(ofSize: 17)
+        let fileManagerHelp = NSTextField(wrappingLabelWithString: String(localized: "Double-clicking a folder opens it in the selected file manager. Showing an item selects it in Finder or QSpace when QSpace is the system file viewer; unsupported file managers open the parent folder."))
+        fileManagerHelp.textColor = .secondaryLabelColor
+        let fileManagerLabel = NSTextField(labelWithString: String(localized: "Default file manager:"))
+        fileManagerPopup.target = self
+        fileManagerPopup.action = #selector(fileManagerChanged(_:))
+        fileManagerPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
+
+        let placementRow = NSStackView(views: [placementLabel, placementPopup])
+        placementRow.orientation = .horizontal
+        placementRow.alignment = .centerY
+        placementRow.spacing = 12
+        let startupSizeRow = NSStackView(views: [startupSizeLabel, startupSizePopup])
+        startupSizeRow.orientation = .horizontal
+        startupSizeRow.alignment = .centerY
+        startupSizeRow.spacing = 12
+        let sizingRow = NSStackView(views: [sizingLabel, columnSizingPopup])
+        sizingRow.orientation = .horizontal
+        sizingRow.alignment = .centerY
+        sizingRow.spacing = 12
+        let fileManagerRow = NSStackView(views: [fileManagerLabel, fileManagerPopup])
+        fileManagerRow.orientation = .horizontal
+        fileManagerRow.alignment = .centerY
+        fileManagerRow.spacing = 12
+
+        let stack = NSStackView(views: [
+            windowHeading,
+            placementRow,
+            startupSizeRow,
+            resetWindowSize,
+            settingsKeepOnTopButton,
+            settingsAllSpacesButton,
+            layoutHeading,
+            layoutHelp,
+            sizingRow,
+            resetLayout,
+            fileManagerHeading,
+            fileManagerHelp,
+            fileManagerRow
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.setCustomSpacing(18, after: settingsAllSpacesButton)
+        stack.setCustomSpacing(18, after: resetLayout)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+            layoutHelp.widthAnchor.constraint(equalToConstant: 600),
+            fileManagerHelp.widthAnchor.constraint(equalToConstant: 600)
         ])
         return view
     }
@@ -393,12 +534,57 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         let help = NSTextField(wrappingLabelWithString: String(localized: "Every button shows its saved shortcut. Click one and press a new combination; modifiers are shown live. Click elsewhere or press Escape to cancel."))
         help.textColor = .secondaryLabelColor
 
+        let globalHeading = NSTextField(labelWithString: String(localized: "Available in Any Application"))
+        globalHeading.font = .boldSystemFont(ofSize: 14)
+        let globalRows = makeShortcutRows(commands: [.globalToggle])
+        let resultsHeading = NSTextField(labelWithString: String(localized: "FindAll Result List"))
+        resultsHeading.font = .boldSystemFont(ofSize: 14)
+        let resultsHelp = NSTextField(wrappingLabelWithString: String(localized: "These shortcuts work only when the result list has keyboard focus and an item is selected."))
+        resultsHelp.textColor = .secondaryLabelColor
+        let resultRows = makeShortcutRows(commands: [.open, .quickLook, .reveal, .copyPath])
+
+        shortcutMessageLabel.textColor = .systemRed
+        shortcutMessageLabel.lineBreakMode = .byTruncatingTail
+        let resetAll = NSButton(title: String(localized: "Restore All Defaults"), target: self, action: #selector(resetAllShortcuts(_:)))
+        resetAll.bezelStyle = .rounded
+
+        [heading, help, globalHeading, globalRows, resultsHeading, resultsHelp, resultRows, shortcutMessageLabel, resetAll].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview($0)
+        }
+        NSLayoutConstraint.activate([
+            heading.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
+            heading.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            help.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
+            help.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            help.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            globalHeading.topAnchor.constraint(equalTo: help.bottomAnchor, constant: 20),
+            globalHeading.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            globalRows.topAnchor.constraint(equalTo: globalHeading.bottomAnchor, constant: 8),
+            globalRows.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            resultsHeading.topAnchor.constraint(equalTo: globalRows.bottomAnchor, constant: 18),
+            resultsHeading.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            resultsHelp.topAnchor.constraint(equalTo: resultsHeading.bottomAnchor, constant: 5),
+            resultsHelp.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            resultsHelp.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            resultRows.topAnchor.constraint(equalTo: resultsHelp.bottomAnchor, constant: 9),
+            resultRows.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            shortcutMessageLabel.topAnchor.constraint(equalTo: resultRows.bottomAnchor, constant: 14),
+            shortcutMessageLabel.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            shortcutMessageLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            resetAll.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            resetAll.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -20)
+        ])
+        return view
+    }
+
+    private func makeShortcutRows(commands: [CommandID]) -> NSStackView {
         let rows = NSStackView()
         rows.orientation = .vertical
-        rows.spacing = 10
+        rows.spacing = 8
         rows.alignment = .leading
-        for (index, command) in CommandID.allCases.enumerated() {
-            let label = NSTextField(labelWithString: "\(command.title) · \(command.scopeTitle)")
+        for command in commands {
+            let label = NSTextField(labelWithString: command.title)
             let recorder = ShortcutRecorderButton(command: command)
             recorder.onBeginRecording = { [weak self, weak recorder] in
                 self?.recorderButtons
@@ -412,7 +598,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             recorderButtons.append(recorder)
 
             let reset = NSButton(title: String(localized: "Reset"), target: self, action: #selector(resetOne(_:)))
-            reset.tag = index
+            reset.tag = CommandID.allCases.firstIndex(of: command) ?? 0
             reset.bezelStyle = .inline
 
             let row = NSGridView(views: [[label, recorder, reset]])
@@ -421,31 +607,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             row.column(at: 2).width = 70
             rows.addArrangedSubview(row)
         }
-
-        shortcutMessageLabel.textColor = .systemRed
-        shortcutMessageLabel.lineBreakMode = .byTruncatingTail
-        let resetAll = NSButton(title: String(localized: "Restore All Defaults"), target: self, action: #selector(resetAllShortcuts(_:)))
-        resetAll.bezelStyle = .rounded
-
-        [heading, help, rows, shortcutMessageLabel, resetAll].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview($0)
-        }
-        NSLayoutConstraint.activate([
-            heading.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
-            heading.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            help.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
-            help.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
-            help.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            rows.topAnchor.constraint(equalTo: help.bottomAnchor, constant: 20),
-            rows.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
-            shortcutMessageLabel.topAnchor.constraint(equalTo: rows.bottomAnchor, constant: 16),
-            shortcutMessageLabel.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
-            shortcutMessageLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            resetAll.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
-            resetAll.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -20)
-        ])
-        return view
+        return rows
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { folderRules.count }
@@ -491,10 +653,105 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func refreshSearchSettings() {
         folderRules = SearchPreferences.folderRules
+        selectItem(in: sortModePopup, representedObject: SearchPreferences.sortMode.rawValue)
         prioritizeFolderRulesButton.state = SearchPreferences.prioritizeFolderRules ? .on : .off
         foldersFirstButton.state = SearchPreferences.foldersFirst ? .on : .off
         refreshFullDiskAccessStatus()
         rulesTableView.reloadData()
+    }
+
+    private func refreshWindowSettings() {
+        selectItem(in: placementPopup, representedObject: WindowPreferences.placement.rawValue)
+        selectItem(in: startupSizePopup, representedObject: WindowPreferences.startupSize.rawValue)
+        selectItem(in: columnSizingPopup, representedObject: WindowPreferences.columnSizingMode.rawValue)
+        settingsKeepOnTopButton.state = WindowPreferences.keepOnTop ? .on : .off
+        settingsAllSpacesButton.state = WindowPreferences.showOnAllSpaces ? .on : .off
+
+        fileManagerPopup.removeAllItems()
+        fileManagerPopup.addItem(withTitle: String(localized: "System Default"))
+        fileManagerPopup.lastItem?.representedObject = FileManagerChoice.systemDefault.rawValue
+        fileManagerPopup.addItem(withTitle: "Finder")
+        fileManagerPopup.lastItem?.representedObject = FileManagerChoice.finder.rawValue
+        if let customURL = WindowPreferences.customFileManagerURL {
+            let name = FileManager.default.displayName(atPath: customURL.path)
+            fileManagerPopup.addItem(withTitle: name)
+            fileManagerPopup.lastItem?.representedObject = FileManagerChoice.custom.rawValue
+        }
+        fileManagerPopup.menu?.addItem(.separator())
+        let choose = NSMenuItem(title: String(localized: "Choose Other Application…"), action: nil, keyEquivalent: "")
+        choose.representedObject = "__choose__"
+        fileManagerPopup.menu?.addItem(choose)
+        selectItem(in: fileManagerPopup, representedObject: WindowPreferences.fileManagerChoice.rawValue)
+    }
+
+    private func selectItem(in popup: NSPopUpButton, representedObject: String) {
+        if let item = popup.itemArray.first(where: { ($0.representedObject as? String) == representedObject }) {
+            popup.select(item)
+        }
+    }
+
+    @objc private func windowPlacementChanged(_ sender: NSPopUpButton) {
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+              let placement = WindowPlacement(rawValue: rawValue) else { return }
+        WindowPreferences.placement = placement
+    }
+
+    @objc private func startupWindowSizeChanged(_ sender: NSPopUpButton) {
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+              let mode = WindowStartupSize(rawValue: rawValue) else { return }
+        WindowPreferences.startupSize = mode
+    }
+
+    @objc private func resetWindowSize(_ sender: Any?) {
+        WindowPreferences.resetWindowSize()
+    }
+
+    @objc private func settingsWindowBehaviorChanged(_ sender: NSButton) {
+        if sender === settingsKeepOnTopButton {
+            WindowPreferences.keepOnTop = sender.state == .on
+        } else if sender === settingsAllSpacesButton {
+            WindowPreferences.showOnAllSpaces = sender.state == .on
+        }
+    }
+
+    @objc private func columnSizingChanged(_ sender: NSPopUpButton) {
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+              let mode = ColumnSizingMode(rawValue: rawValue) else { return }
+        WindowPreferences.columnSizingMode = mode
+    }
+
+    @objc private func resetColumnLayout(_ sender: Any?) {
+        WindowPreferences.resetColumnLayout()
+    }
+
+    @objc private func fileManagerChanged(_ sender: NSPopUpButton) {
+        guard let rawValue = sender.selectedItem?.representedObject as? String else { return }
+        if rawValue == "__choose__" {
+            chooseCustomFileManager()
+            return
+        }
+        guard let choice = FileManagerChoice(rawValue: rawValue) else { return }
+        WindowPreferences.fileManagerChoice = choice
+    }
+
+    private func chooseCustomFileManager() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        panel.prompt = String(localized: "Choose")
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            guard response == .OK, let url = panel.url else {
+                self.refreshWindowSettings()
+                return
+            }
+            WindowPreferences.customFileManagerURL = url
+            WindowPreferences.fileManagerChoice = .custom
+        }
     }
 
     private func refreshFullDiskAccessStatus() {
@@ -516,6 +773,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     @objc private func prioritizeFolderRulesChanged(_ sender: NSButton) {
         SearchPreferences.prioritizeFolderRules = sender.state == .on
+    }
+
+    @objc private func sortModeChanged(_ sender: NSPopUpButton) {
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+              let mode = ResultSortMode(rawValue: rawValue) else { return }
+        SearchPreferences.sortMode = mode
     }
 
     @objc private func foldersFirstChanged(_ sender: NSButton) {
@@ -676,6 +939,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     func windowDidBecomeKey(_ notification: Notification) {
         refreshButtons()
         refreshSearchSettings()
+        refreshWindowSettings()
     }
 
     func windowDidResignKey(_ notification: Notification) {

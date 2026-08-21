@@ -83,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func refreshShortcutConfiguration() {
-        for command in [CommandID.reveal, .copyPath] {
+        for command in [CommandID.open, .reveal, .copyPath] {
             let identifier = NSUserInterfaceItemIdentifier("command.\(command.rawValue)")
             guard let item = NSApp.mainMenu?.items
                 .compactMap(\.submenu)

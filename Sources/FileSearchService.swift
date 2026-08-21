@@ -19,13 +19,13 @@ struct SearchRequest: Equatable {
 
 enum SearchFailure {
     case couldNotStart
-    case timedOut
 }
 
 enum SearchUpdate {
     case idle
     case started
     case gathering(Int)
+    case delayed
     case results([SearchResult])
     case failed(SearchFailure)
 }
@@ -34,7 +34,7 @@ final class FileSearchService: NSObject {
     var onUpdate: ((SearchUpdate) -> Void)?
 
     private let resultLimit = 2_000
-    private let queryTimeout: TimeInterval = 12
+    private let queryTimeout: TimeInterval = 30
     private var generation = 0
     private var timeoutWorkItem: DispatchWorkItem?
     private var activeQuery: NSMetadataQuery?
@@ -190,8 +190,10 @@ final class FileSearchService: NSObject {
         if resultCount > 0 {
             publishResults(from: query, generation: generation)
         } else {
-            stopActiveQuery()
-            onUpdate?(.failed(.timedOut))
+            // A cold or rebuilding Spotlight index can legitimately take longer.
+            // Keep the live query running so a later completion can still publish.
+            timeoutWorkItem = nil
+            onUpdate?(.delayed)
         }
     }
 

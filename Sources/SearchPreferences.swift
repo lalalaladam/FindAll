@@ -83,6 +83,7 @@ enum SearchCategory: String, CaseIterable, Codable {
 }
 
 enum ResultSortMode: String, CaseIterable, Codable {
+    case smart
     case nameAscending
     case nameDescending
     case pathAscending
@@ -96,6 +97,7 @@ enum ResultSortMode: String, CaseIterable, Codable {
 
     var title: String {
         switch self {
+        case .smart: return String(localized: "Smart (Common Documents First)")
         case .nameAscending: return String(localized: "Name (A–Z)")
         case .nameDescending: return String(localized: "Name (Z–A)")
         case .pathAscending: return String(localized: "Path (A–Z)")
@@ -137,6 +139,246 @@ struct FolderRule: Codable, Equatable {
     var priority: FolderPriority
 }
 
+enum WindowPlacement: String, CaseIterable {
+    case center
+    case remember
+
+    var title: String {
+        switch self {
+        case .center: return String(localized: "Center on the current display")
+        case .remember: return String(localized: "Restore the previous position")
+        }
+    }
+}
+
+enum WindowStartupSize: String, CaseIterable {
+    case previous
+    case defaultSize
+
+    var title: String {
+        switch self {
+        case .previous: return String(localized: "Use the previous window size")
+        case .defaultSize: return String(localized: "Use the default window size")
+        }
+    }
+}
+
+enum ColumnSizingMode: String, CaseIterable {
+    case fitWindow
+    case manual
+
+    var title: String {
+        switch self {
+        case .fitWindow: return String(localized: "Fit columns to window (No Horizontal Scrolling)")
+        case .manual: return String(localized: "Fixed column widths (Scroll When Needed)")
+        }
+    }
+}
+
+enum FileManagerChoice: String, CaseIterable {
+    case systemDefault
+    case finder
+    case custom
+}
+
+enum WindowPreferences {
+    static let didChangeNotification = Notification.Name("FindAllWindowPreferencesDidChange")
+    static let resetColumnLayoutNotification = Notification.Name("FindAllResetColumnLayout")
+    static let resetWindowSizeNotification = Notification.Name("FindAllResetWindowSize")
+
+    static let defaultWindowSize = NSSize(width: 980, height: 620)
+    static let columnWidthsKey = "table.columnWidths.v4"
+    static let automaticColumnWidthsKey = "table.automaticColumnWidths.v1"
+    static let columnOrderKey = "table.columnOrder.v1"
+
+    private enum Key {
+        static let placement = "window.placement"
+        static let startupSize = "window.startupSize"
+        static let rememberSize = "window.rememberSize"
+        static let savedSize = "window.savedSize"
+        static let savedOrigin = "window.savedOrigin"
+        static let keepOnTop = "window.keepOnTop"
+        static let showOnAllSpaces = "window.showOnAllSpaces"
+        static let columnSizingMode = "table.columnSizingMode"
+        static let fileManagerChoice = "fileManager.choice"
+        static let customFileManagerPath = "fileManager.customPath"
+    }
+
+    static var placement: WindowPlacement {
+        get { WindowPlacement(rawValue: UserDefaults.standard.string(forKey: Key.placement) ?? "") ?? .center }
+        set { set(newValue.rawValue, forKey: Key.placement) }
+    }
+
+    static var startupSize: WindowStartupSize {
+        get {
+            if let rawValue = UserDefaults.standard.string(forKey: Key.startupSize),
+               let value = WindowStartupSize(rawValue: rawValue) {
+                return value
+            }
+            guard UserDefaults.standard.object(forKey: Key.rememberSize) != nil else { return .previous }
+            return UserDefaults.standard.bool(forKey: Key.rememberSize) ? .previous : .defaultSize
+        }
+        set { set(newValue.rawValue, forKey: Key.startupSize) }
+    }
+
+    static var keepOnTop: Bool {
+        get { UserDefaults.standard.bool(forKey: Key.keepOnTop) }
+        set { set(newValue, forKey: Key.keepOnTop) }
+    }
+
+    static var showOnAllSpaces: Bool {
+        get { UserDefaults.standard.bool(forKey: Key.showOnAllSpaces) }
+        set { set(newValue, forKey: Key.showOnAllSpaces) }
+    }
+
+    static var columnSizingMode: ColumnSizingMode {
+        get { ColumnSizingMode(rawValue: UserDefaults.standard.string(forKey: Key.columnSizingMode) ?? "") ?? .fitWindow }
+        set { set(newValue.rawValue, forKey: Key.columnSizingMode) }
+    }
+
+    static var fileManagerChoice: FileManagerChoice {
+        get {
+            let choice = FileManagerChoice(rawValue: UserDefaults.standard.string(forKey: Key.fileManagerChoice) ?? "") ?? .systemDefault
+            if choice == .custom, customFileManagerURL == nil { return .systemDefault }
+            return choice
+        }
+        set { set(newValue.rawValue, forKey: Key.fileManagerChoice) }
+    }
+
+    static var customFileManagerURL: URL? {
+        get {
+            guard let path = UserDefaults.standard.string(forKey: Key.customFileManagerPath),
+                  FileManager.default.fileExists(atPath: path) else { return nil }
+            return URL(fileURLWithPath: path)
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue.standardizedFileURL.path, forKey: Key.customFileManagerPath)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Key.customFileManagerPath)
+            }
+            notify()
+        }
+    }
+
+    static var savedSize: NSSize? {
+        get {
+            guard let value = UserDefaults.standard.string(forKey: Key.savedSize) else { return nil }
+            let size = NSSizeFromString(value)
+            return size.width > 0 && size.height > 0 ? size : nil
+        }
+        set {
+            if let newValue { UserDefaults.standard.set(NSStringFromSize(newValue), forKey: Key.savedSize) }
+            else { UserDefaults.standard.removeObject(forKey: Key.savedSize) }
+        }
+    }
+
+    static var savedOrigin: NSPoint? {
+        get {
+            guard let value = UserDefaults.standard.string(forKey: Key.savedOrigin) else { return nil }
+            return NSPointFromString(value)
+        }
+        set {
+            if let newValue { UserDefaults.standard.set(NSStringFromPoint(newValue), forKey: Key.savedOrigin) }
+            else { UserDefaults.standard.removeObject(forKey: Key.savedOrigin) }
+        }
+    }
+
+    static func resetColumnLayout() {
+        UserDefaults.standard.removeObject(forKey: columnWidthsKey)
+        UserDefaults.standard.removeObject(forKey: automaticColumnWidthsKey)
+        UserDefaults.standard.removeObject(forKey: columnOrderKey)
+        NotificationCenter.default.post(name: resetColumnLayoutNotification, object: nil)
+    }
+
+    static func resetWindowSize() {
+        UserDefaults.standard.removeObject(forKey: Key.savedSize)
+        NotificationCenter.default.post(name: resetWindowSizeNotification, object: nil)
+    }
+
+    private static func set(_ value: Any, forKey key: String) {
+        UserDefaults.standard.set(value, forKey: key)
+        notify()
+    }
+
+    private static func notify() {
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
+    }
+}
+
+enum FileManagerSupport {
+    static func openFolders(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let workspace = NSWorkspace.shared
+        if let applicationURL = selectedFileManagerURL {
+            open(urls, with: applicationURL, workspace: workspace)
+        } else {
+            urls.forEach { workspace.open($0) }
+        }
+    }
+
+    static func reveal(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        guard let applicationURL = selectedFileManagerURL else {
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+            return
+        }
+        if isFinder(applicationURL) {
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        } else if isQSpace(applicationURL), systemFileViewerIsQSpace {
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        } else {
+            open(parentURLs(for: urls), with: applicationURL, workspace: .shared)
+        }
+    }
+
+    static var canSelectRevealedItem: Bool {
+        guard let applicationURL = selectedFileManagerURL else { return true }
+        return isFinder(applicationURL) || (isQSpace(applicationURL) && systemFileViewerIsQSpace)
+    }
+
+    private static var finderURL: URL {
+        URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
+    }
+
+    private static var selectedFileManagerURL: URL? {
+        switch WindowPreferences.fileManagerChoice {
+        case .finder:
+            return finderURL
+        case .custom:
+            return WindowPreferences.customFileManagerURL
+        case .systemDefault:
+            guard let bundleIdentifier = UserDefaults.standard.string(forKey: "NSFileViewer"),
+                  bundleIdentifier != "com.apple.finder" else { return nil }
+            return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+        }
+    }
+
+    private static func isFinder(_ applicationURL: URL) -> Bool {
+        Bundle(url: applicationURL)?.bundleIdentifier == "com.apple.finder"
+    }
+
+    private static func isQSpace(_ applicationURL: URL) -> Bool {
+        Bundle(url: applicationURL)?.bundleIdentifier?.hasPrefix("com.jinghaoshe.qspace") == true
+    }
+
+    private static var systemFileViewerIsQSpace: Bool {
+        UserDefaults.standard.string(forKey: "NSFileViewer")?.hasPrefix("com.jinghaoshe.qspace") == true
+    }
+
+    private static func parentURLs(for urls: [URL]) -> [URL] {
+        var seen = Set<URL>()
+        return urls.compactMap {
+            let parent = $0.deletingLastPathComponent().standardizedFileURL
+            return seen.insert(parent).inserted ? parent : nil
+        }
+    }
+
+    private static func open(_ urls: [URL], with applicationURL: URL, workspace: NSWorkspace) {
+        workspace.open(urls, withApplicationAt: applicationURL, configuration: NSWorkspace.OpenConfiguration())
+    }
+}
+
 enum SearchPreferences {
     static let didChangeNotification = Notification.Name("FindAllSearchPreferencesDidChange")
 
@@ -167,7 +409,7 @@ enum SearchPreferences {
     }
 
     static var sortMode: ResultSortMode {
-        get { ResultSortMode(rawValue: UserDefaults.standard.string(forKey: Key.sortMode) ?? "") ?? .nameAscending }
+        get { ResultSortMode(rawValue: UserDefaults.standard.string(forKey: Key.sortMode) ?? "") ?? .smart }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: Key.sortMode)
             notify()

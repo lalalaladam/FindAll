@@ -32,6 +32,8 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>FindAll uses Finder automation only to open information windows for selected search results.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>
