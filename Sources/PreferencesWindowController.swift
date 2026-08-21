@@ -268,11 +268,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private var isWindowSettingsRefreshScheduled = false
     private let centerPlacementButton = NSButton(radioButtonWithTitle: WindowPlacement.center.title, target: nil, action: nil)
     private let rememberPlacementButton = NSButton(radioButtonWithTitle: WindowPlacement.remember.title, target: nil, action: nil)
-    private let startupSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let columnSizingPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let startupSizePopup = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let columnSizingPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let settingsKeepOnTopButton = NSButton(checkboxWithTitle: String(localized: "Keep on top in current Space"), target: nil, action: nil)
     private let settingsAllSpacesButton = NSButton(checkboxWithTitle: String(localized: "Show on all Spaces"), target: nil, action: nil)
-    private let fileManagerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let fileManagerPopup = NSPopUpButton(frame: .zero, pullsDown: true)
 
     init(onChange: @escaping () -> Void) {
         self.onShortcutChange = onChange
@@ -441,12 +441,6 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         placementOptions.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         let startupSizeLabel = NSTextField(labelWithString: String(localized: "At app launch:"))
-        for mode in WindowStartupSize.allCases {
-            startupSizePopup.addItem(withTitle: mode.title)
-            startupSizePopup.lastItem?.representedObject = mode.rawValue
-        }
-        startupSizePopup.target = self
-        startupSizePopup.action = #selector(startupWindowSizeChanged(_:))
         startupSizePopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
         let resetWindowSize = NSButton(title: String(localized: "Restore Default Window Size Now"), target: self, action: #selector(resetWindowSize(_:)))
         settingsKeepOnTopButton.target = self
@@ -459,12 +453,6 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         let layoutHelp = NSTextField(wrappingLabelWithString: String(localized: "Fitted columns can still be adjusted: other columns compensate to avoid horizontal scrolling. Name and Modified shrink last; Path shrinks first. Fixed widths use horizontal scrolling when needed."))
         layoutHelp.textColor = .secondaryLabelColor
         let sizingLabel = NSTextField(labelWithString: String(localized: "Column widths:"))
-        for mode in ColumnSizingMode.allCases {
-            columnSizingPopup.addItem(withTitle: mode.title)
-            columnSizingPopup.lastItem?.representedObject = mode.rawValue
-        }
-        columnSizingPopup.target = self
-        columnSizingPopup.action = #selector(columnSizingChanged(_:))
         columnSizingPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
         let resetLayout = NSButton(title: String(localized: "Restore Default Column Layout"), target: self, action: #selector(resetColumnLayout(_:)))
 
@@ -473,8 +461,6 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         let fileManagerHelp = NSTextField(wrappingLabelWithString: String(localized: "Double-clicking a folder opens it in the selected file manager. Showing an item opens its parent and selects it in Finder or QSpace; unsupported file managers open the parent folder."))
         fileManagerHelp.textColor = .secondaryLabelColor
         let fileManagerLabel = NSTextField(labelWithString: String(localized: "Default file manager:"))
-        fileManagerPopup.target = self
-        fileManagerPopup.action = #selector(fileManagerChanged(_:))
         fileManagerPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         let placementRow = NSStackView(views: [placementLabel, placementOptions])
@@ -681,26 +667,111 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         let placement = WindowPreferences.placement
         centerPlacementButton.state = placement == .center ? .on : .off
         rememberPlacementButton.state = placement == .remember ? .on : .off
-        selectItem(in: startupSizePopup, representedObject: WindowPreferences.startupSize.rawValue)
-        selectItem(in: columnSizingPopup, representedObject: WindowPreferences.columnSizingMode.rawValue)
+        rebuildStartupSizeMenu()
+        rebuildColumnSizingMenu()
         settingsKeepOnTopButton.state = WindowPreferences.keepOnTop ? .on : .off
         settingsAllSpacesButton.state = WindowPreferences.showOnAllSpaces ? .on : .off
 
+        rebuildFileManagerMenu()
+    }
+
+    private func rebuildStartupSizeMenu() {
+        let selectedMode = WindowPreferences.startupSize
+        rebuildPullDown(
+            startupSizePopup,
+            selectedTitle: selectedMode.title,
+            choices: WindowStartupSize.allCases.map { ($0.title, $0.rawValue, $0 == selectedMode) },
+            action: #selector(startupWindowSizeChanged(_:))
+        )
+    }
+
+    private func rebuildColumnSizingMenu() {
+        let selectedMode = WindowPreferences.columnSizingMode
+        rebuildPullDown(
+            columnSizingPopup,
+            selectedTitle: selectedMode.title,
+            choices: ColumnSizingMode.allCases.map { ($0.title, $0.rawValue, $0 == selectedMode) },
+            action: #selector(columnSizingChanged(_:))
+        )
+    }
+
+    private func rebuildFileManagerMenu() {
+        let selectedChoice = WindowPreferences.fileManagerChoice
+        let customURL = WindowPreferences.customFileManagerURL
+        let customName = customURL.map { FileManager.default.displayName(atPath: $0.path) }
+        let selectedTitle: String
+        switch selectedChoice {
+        case .systemDefault: selectedTitle = String(localized: "System Default")
+        case .finder: selectedTitle = "Finder"
+        case .custom: selectedTitle = customName ?? String(localized: "System Default")
+        }
+
         fileManagerPopup.removeAllItems()
-        fileManagerPopup.addItem(withTitle: String(localized: "System Default"))
-        fileManagerPopup.lastItem?.representedObject = FileManagerChoice.systemDefault.rawValue
-        fileManagerPopup.addItem(withTitle: "Finder")
-        fileManagerPopup.lastItem?.representedObject = FileManagerChoice.finder.rawValue
-        if let customURL = WindowPreferences.customFileManagerURL {
-            let name = FileManager.default.displayName(atPath: customURL.path)
-            fileManagerPopup.addItem(withTitle: name)
-            fileManagerPopup.lastItem?.representedObject = FileManagerChoice.custom.rawValue
+        fileManagerPopup.addItem(withTitle: selectedTitle)
+        let choices: [(String, FileManagerChoice)] = [
+            (String(localized: "System Default"), .systemDefault),
+            ("Finder", .finder)
+        ]
+        for (title, choice) in choices {
+            addPullDownItem(
+                to: fileManagerPopup,
+                title: title,
+                representedObject: choice.rawValue,
+                selected: choice == selectedChoice,
+                action: #selector(fileManagerChanged(_:))
+            )
+        }
+        if let customName {
+            addPullDownItem(
+                to: fileManagerPopup,
+                title: customName,
+                representedObject: FileManagerChoice.custom.rawValue,
+                selected: selectedChoice == .custom,
+                action: #selector(fileManagerChanged(_:))
+            )
         }
         fileManagerPopup.menu?.addItem(.separator())
-        let choose = NSMenuItem(title: String(localized: "Choose Other Application…"), action: nil, keyEquivalent: "")
+        let choose = NSMenuItem(
+            title: String(localized: "Choose Other Application…"),
+            action: #selector(fileManagerChanged(_:)),
+            keyEquivalent: ""
+        )
+        choose.target = self
         choose.representedObject = "__choose__"
         fileManagerPopup.menu?.addItem(choose)
-        selectItem(in: fileManagerPopup, representedObject: WindowPreferences.fileManagerChoice.rawValue)
+    }
+
+    private func rebuildPullDown(
+        _ popup: NSPopUpButton,
+        selectedTitle: String,
+        choices: [(title: String, representedObject: String, selected: Bool)],
+        action: Selector
+    ) {
+        popup.removeAllItems()
+        popup.addItem(withTitle: selectedTitle)
+        for choice in choices {
+            addPullDownItem(
+                to: popup,
+                title: choice.title,
+                representedObject: choice.representedObject,
+                selected: choice.selected,
+                action: action
+            )
+        }
+    }
+
+    private func addPullDownItem(
+        to popup: NSPopUpButton,
+        title: String,
+        representedObject: String,
+        selected: Bool,
+        action: Selector
+    ) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.representedObject = representedObject
+        item.state = selected ? .on : .off
+        popup.menu?.addItem(item)
     }
 
     private func scheduleWindowSettingsRefresh() {
@@ -731,8 +802,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         WindowPreferences.placement = placement
     }
 
-    @objc private func startupWindowSizeChanged(_ sender: NSPopUpButton) {
-        guard let rawValue = sender.selectedItem?.representedObject as? String,
+    @objc private func startupWindowSizeChanged(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
               let mode = WindowStartupSize(rawValue: rawValue) else { return }
         WindowPreferences.startupSize = mode
     }
@@ -749,8 +820,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         }
     }
 
-    @objc private func columnSizingChanged(_ sender: NSPopUpButton) {
-        guard let rawValue = sender.selectedItem?.representedObject as? String,
+    @objc private func columnSizingChanged(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
               let mode = ColumnSizingMode(rawValue: rawValue) else { return }
         WindowPreferences.columnSizingMode = mode
     }
@@ -759,8 +830,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         WindowPreferences.resetColumnLayout()
     }
 
-    @objc private func fileManagerChanged(_ sender: NSPopUpButton) {
-        guard let rawValue = sender.selectedItem?.representedObject as? String else { return }
+    @objc private func fileManagerChanged(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String else { return }
         if rawValue == "__choose__" {
             chooseCustomFileManager()
             return

@@ -25,6 +25,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var scrollerStyleObserver: NSObjectProtocol?
     private var sharingServicePicker: NSSharingServicePicker?
     private var isAdjustingColumns = false
+    private var hasRestoredFittedColumnLayout = false
     private var isSynchronizingSort = false
     private var isFilterRefreshScheduled = false
     private var activeColumnSizingMode = WindowPreferences.columnSizingMode
@@ -346,6 +347,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         let fittedHeaderView = FittedTableHeaderView()
         fittedHeaderView.usesFittedResizing = { WindowPreferences.columnSizingMode == .fitWindow }
+        fittedHeaderView.resizeDirections = { [weak self] dividerIndex in
+            self?.fittedResizeDirections(at: dividerIndex) ?? (false, false)
+        }
         fittedHeaderView.onResizeWillBegin = { [weak self] in self?.isAdjustingColumns = true }
         fittedHeaderView.onResize = { [weak self] dividerIndex, initialWidths, delta in
             self?.resizeFittedColumns(at: dividerIndex, initialWidths: initialWidths, delta: delta)
@@ -353,7 +357,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         fittedHeaderView.onResizeDidEnd = { [weak self] in
             guard let self else { return }
             self.isAdjustingColumns = false
-            self.saveColumnWidths(forKey: WindowPreferences.automaticColumnWidthsKey)
+            self.saveFittedColumnLayout()
         }
         tableView.headerView = fittedHeaderView
 
@@ -363,9 +367,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         addColumn("size", title: String(localized: "Size"), width: 85, minimum: 70)
         addColumn("modified", title: String(localized: "Modified"), width: 145, minimum: 115)
         restoreColumnOrder()
-        restoreColumnWidths(forKey: WindowPreferences.columnSizingMode == .manual
-            ? WindowPreferences.columnWidthsKey
-            : WindowPreferences.automaticColumnWidthsKey)
+        if WindowPreferences.columnSizingMode == .manual {
+            restoreColumnWidths(forKey: WindowPreferences.columnWidthsKey)
+        }
 
         let menu = NSMenu()
         menu.delegate = self
@@ -417,12 +421,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         scrollView.tile()
         let viewportWidth = floor(scrollView.contentSize.width)
         guard viewportWidth > 0 else { return }
-        let trailingSafetyWidth = verticalScrollerSafetyWidth
-        let usableWidth = max(0, viewportWidth - trailingSafetyWidth)
+        let usableWidth = fitsWindow ? fittedColumnLayoutWidth : viewportWidth
+        guard usableWidth > 0 else { return }
 
         if fitsWindow {
             isAdjustingColumns = true
-            fitColumns(to: usableWidth, protecting: nil)
+            if initialLayout, !hasRestoredFittedColumnLayout {
+                restoreFittedColumnLayout(to: usableWidth)
+                hasRestoredFittedColumnLayout = true
+            } else {
+                fitColumns(to: usableWidth, protecting: nil)
+            }
             isAdjustingColumns = false
         } else if initialLayout {
             restoreColumnWidths(forKey: WindowPreferences.columnWidthsKey)
@@ -430,11 +439,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         let columnsWidth = tableView.tableColumns.reduce(0) { $0 + $1.width }
         var frame = tableView.frame
-        frame.size.width = fitsWindow ? usableWidth : max(viewportWidth, columnsWidth + trailingSafetyWidth)
+        frame.size.width = fitsWindow
+            ? usableWidth
+            : max(viewportWidth, columnsWidth + overlayScrollerSafetyWidth)
         tableView.frame = frame
+        refreshColumnResizeCursorRects()
     }
 
-    private var verticalScrollerSafetyWidth: CGFloat {
+    private var fittedColumnLayoutWidth: CGFloat {
+        let insets = scrollView.contentInsets
+        let viewportWidth = floor(scrollView.bounds.width - insets.left - insets.right)
+        guard scrollView.hasVerticalScroller else { return max(0, viewportWidth) }
+        let reservedWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollView.scrollerStyle) + 4
+        return max(0, viewportWidth - reservedWidth)
+    }
+
+    private var overlayScrollerSafetyWidth: CGFloat {
         guard scrollView.hasVerticalScroller, scrollView.scrollerStyle == .overlay else { return 0 }
         return NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay) + 4
     }
@@ -530,6 +550,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         }
         tableView.needsDisplay = true
         tableView.headerView?.needsDisplay = true
+        refreshColumnResizeCursorRects()
+    }
+
+    private func fittedResizeDirections(at dividerIndex: Int) -> (left: Bool, right: Bool) {
+        let columns = tableView.tableColumns
+        guard columns.indices.contains(dividerIndex), dividerIndex + 1 < columns.count else {
+            return (false, false)
+        }
+        let canMoveLeft = columns.indices.prefix(dividerIndex + 1).contains { index in
+            columns[index].width - columns[index].minWidth > 0.5
+        }
+        let canMoveRight = columns.indices.dropFirst(dividerIndex + 1).contains { index in
+            columns[index].width - columns[index].minWidth > 0.5
+        }
+        return (canMoveLeft, canMoveRight)
+    }
+
+    private func refreshColumnResizeCursorRects() {
+        guard let headerView = tableView.headerView, let window = headerView.window else { return }
+        window.invalidateCursorRects(for: headerView)
     }
 
     private func shrinkFittedWidths(
@@ -576,9 +616,78 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         }
     }
 
+    private func restoreFittedColumnLayout(to targetWidth: CGFloat) {
+        guard let savedWidths = UserDefaults.standard.dictionary(
+            forKey: WindowPreferences.automaticColumnWidthsKey
+        ) as? [String: Double] else {
+            fitColumns(to: targetWidth, protecting: nil)
+            return
+        }
+
+        let columns = tableView.tableColumns
+        let widths = columns.map { column in
+            max(column.minWidth, CGFloat(savedWidths[column.identifier.rawValue] ?? Double(column.width)))
+        }
+        let savedReferenceWidth = UserDefaults.standard.object(
+            forKey: WindowPreferences.automaticColumnReferenceWidthKey
+        ) == nil
+            ? widths.reduce(0, +)
+            : CGFloat(UserDefaults.standard.double(forKey: WindowPreferences.automaticColumnReferenceWidthKey))
+
+        if abs(savedReferenceWidth - targetWidth) <= 0.5 {
+            applyColumnWidths(widths)
+            fitColumns(to: targetWidth, protecting: nil)
+            return
+        }
+
+        let minimumWidth = columns.reduce(CGFloat.zero) { $0 + $1.minWidth }
+        let availableFlexibleWidth = max(0, targetWidth - minimumWidth)
+        let savedFlexibleWidths = zip(columns, widths).map { column, width in
+            max(0, width - column.minWidth)
+        }
+        let totalSavedFlexibleWidth = savedFlexibleWidths.reduce(0, +)
+        guard totalSavedFlexibleWidth > 0.5 else {
+            applyColumnWidths(widths)
+            fitColumns(to: targetWidth, protecting: nil)
+            return
+        }
+
+        var remainingFlexibleWidth = availableFlexibleWidth
+        let adaptedWidths = columns.indices.map { index -> CGFloat in
+            let addition: CGFloat
+            if index == columns.count - 1 {
+                addition = remainingFlexibleWidth
+            } else {
+                addition = availableFlexibleWidth * savedFlexibleWidths[index] / totalSavedFlexibleWidth
+                remainingFlexibleWidth -= addition
+            }
+            return columns[index].minWidth + max(0, addition)
+        }
+        applyColumnWidths(adaptedWidths)
+        fitColumns(to: targetWidth, protecting: nil)
+    }
+
+    private func applyColumnWidths(_ widths: [CGFloat]) {
+        for (column, width) in zip(tableView.tableColumns, widths) {
+            column.width = max(column.minWidth, width)
+        }
+    }
+
     private func saveColumnWidths(forKey key: String) {
         let widths = Dictionary(uniqueKeysWithValues: tableView.tableColumns.map { ($0.identifier.rawValue, Double($0.width)) })
         UserDefaults.standard.set(widths, forKey: key)
+    }
+
+    private func saveFittedColumnLayout() {
+        guard WindowPreferences.columnSizingMode == .fitWindow else { return }
+        saveColumnWidths(forKey: WindowPreferences.automaticColumnWidthsKey)
+        let referenceWidth = fittedColumnLayoutWidth > 0
+            ? fittedColumnLayoutWidth
+            : tableView.tableColumns.reduce(0) { $0 + $1.width }
+        UserDefaults.standard.set(
+            Double(referenceWidth),
+            forKey: WindowPreferences.automaticColumnReferenceWidthKey
+        )
     }
 
     private func restoreColumnOrder() {
@@ -615,9 +724,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     func windowDidResize(_ notification: Notification) {
         layoutColumns()
+        if WindowPreferences.startupSize == .previous, let window, !window.inLiveResize {
+            WindowPreferences.savedSize = window.frame.size
+        }
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
         if WindowPreferences.startupSize == .previous, let window {
             WindowPreferences.savedSize = window.frame.size
         }
+        saveFittedColumnLayout()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if WindowPreferences.startupSize == .previous, let window {
+            WindowPreferences.savedSize = window.frame.size
+        }
+        saveFittedColumnLayout()
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -630,8 +753,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         guard !isAdjustingColumns else { return }
         if WindowPreferences.columnSizingMode == .fitWindow {
             if let resizedColumn = notification.userInfo?["NSTableColumn"] as? NSTableColumn {
-                let viewportWidth = floor(scrollView.contentSize.width)
-                let usableWidth = max(0, viewportWidth - verticalScrollerSafetyWidth)
+                let usableWidth = fittedColumnLayoutWidth
                 isAdjustingColumns = true
                 fitColumns(to: usableWidth, protecting: resizedColumn.identifier.rawValue)
                 var frame = tableView.frame
@@ -641,7 +763,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             } else {
                 layoutColumns()
             }
-            saveColumnWidths(forKey: WindowPreferences.automaticColumnWidthsKey)
+            saveFittedColumnLayout()
         } else {
             layoutColumns()
             saveColumnWidths(forKey: WindowPreferences.columnWidthsKey)
@@ -1310,16 +1432,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let newColumnSizingMode = WindowPreferences.columnSizingMode
         if newColumnSizingMode != activeColumnSizingMode {
             activeColumnSizingMode = newColumnSizingMode
-            restoreColumnWidths(forKey: newColumnSizingMode == .manual
-                ? WindowPreferences.columnWidthsKey
-                : WindowPreferences.automaticColumnWidthsKey)
+            if newColumnSizingMode == .manual {
+                restoreColumnWidths(forKey: WindowPreferences.columnWidthsKey)
+            } else {
+                hasRestoredFittedColumnLayout = false
+            }
         }
         if let window {
             if WindowPreferences.startupSize == .previous { WindowPreferences.savedSize = window.frame.size }
             if WindowPreferences.placement == .remember { WindowPreferences.savedOrigin = window.frame.origin }
         }
         restoreWindowBehavior()
-        layoutColumns()
+        layoutColumns(initialLayout: newColumnSizingMode == .fitWindow && !hasRestoredFittedColumnLayout)
     }
 }
 
@@ -1392,6 +1516,7 @@ private final class ActionTableView: NSTableView {
 
 private final class FittedTableHeaderView: NSTableHeaderView {
     var usesFittedResizing: (() -> Bool)?
+    var resizeDirections: ((Int) -> (left: Bool, right: Bool))?
     var onResizeWillBegin: (() -> Void)?
     var onResize: ((Int, [CGFloat], CGFloat) -> Void)?
     var onResizeDidEnd: (() -> Void)?
@@ -1407,6 +1532,8 @@ private final class FittedTableHeaderView: NSTableHeaderView {
         // The trailing table edge is fixed in fitted mode. Inner dividers exchange
         // width with the columns on the opposite side while the pointer is tracking.
         guard dividerIndex + 1 < tableView.tableColumns.count else { return }
+        let directions = resizeDirections?(dividerIndex) ?? (left: false, right: false)
+        guard directions.left || directions.right else { return }
         let initialX = convert(event.locationInWindow, from: nil).x
         let initialWidths = tableView.tableColumns.map(\.width)
         onResizeWillBegin?()
@@ -1421,6 +1548,32 @@ private final class FittedTableHeaderView: NSTableHeaderView {
             if nextEvent.type == .leftMouseUp { break }
             let currentX = convert(nextEvent.locationInWindow, from: nil).x
             onResize?(dividerIndex, initialWidths, currentX - initialX)
+        }
+    }
+
+    override func resetCursorRects() {
+        guard usesFittedResizing?() == true, let tableView else {
+            super.resetCursorRects()
+            return
+        }
+
+        let tolerance: CGFloat = 5
+        for dividerIndex in tableView.tableColumns.indices.dropLast() {
+            let directions = resizeDirections?(dividerIndex) ?? (left: false, right: false)
+            guard directions.left || directions.right else { continue }
+            let dividerX = tableView.rect(ofColumn: dividerIndex).maxX
+            let cursorRect = bounds.intersection(
+                NSRect(x: dividerX - tolerance, y: bounds.minY, width: tolerance * 2, height: bounds.height)
+            )
+            guard !cursorRect.isEmpty else { continue }
+            let cursor: NSCursor
+            switch (directions.left, directions.right) {
+            case (true, true): cursor = .resizeLeftRight
+            case (true, false): cursor = .resizeLeft
+            case (false, true): cursor = .resizeRight
+            case (false, false): continue
+            }
+            addCursorRect(cursorRect, cursor: cursor)
         }
     }
 

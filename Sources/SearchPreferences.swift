@@ -189,6 +189,7 @@ enum WindowPreferences {
     static let defaultWindowSize = NSSize(width: 980, height: 620)
     static let columnWidthsKey = "table.columnWidths.v4"
     static let automaticColumnWidthsKey = "table.automaticColumnWidths.v1"
+    static let automaticColumnReferenceWidthKey = "table.automaticColumnReferenceWidth.v1"
     static let columnOrderKey = "table.columnOrder.v1"
 
     private enum Key {
@@ -287,6 +288,7 @@ enum WindowPreferences {
     static func resetColumnLayout() {
         UserDefaults.standard.removeObject(forKey: columnWidthsKey)
         UserDefaults.standard.removeObject(forKey: automaticColumnWidthsKey)
+        UserDefaults.standard.removeObject(forKey: automaticColumnReferenceWidthKey)
         UserDefaults.standard.removeObject(forKey: columnOrderKey)
         NotificationCenter.default.post(name: resetColumnLayoutNotification, object: nil)
     }
