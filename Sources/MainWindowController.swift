@@ -37,12 +37,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var isSynchronizingSort = false
     private var isFilterRefreshScheduled = false
     private var saveWindowOriginWorkItem: DispatchWorkItem?
+    private var windowUsesAllSpacesPresentation = WindowPreferences.showOnAllSpaces
     private var activeColumnSizingMode = WindowPreferences.columnSizingMode
     private var activeSortMode = SearchPreferences.sortMode
     private var observedDefaultSortMode = SearchPreferences.sortMode
 
     private static let fullDiskAccessNoticeKey = "privacy.fullDiskAccessNoticeShown.v2"
-    private static let displayedResultLimit = 2_000
+    private static let displayedResultLimit = 5_000
     private static let defaultColumnOrder = ["name", "path", "kind", "size", "modified"]
     private static let defaultColumnWidths: [String: CGFloat] = [
         "name": 260,
@@ -53,16 +54,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     ]
 
     init() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 620),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "FindAll"
-        window.titleVisibility = .hidden
-        window.minSize = NSSize(width: 720, height: 420)
-        window.isReleasedWhenClosed = false
+        let window = Self.makeWindow(showOnAllSpaces: WindowPreferences.showOnAllSpaces)
         super.init(window: window)
         window.delegate = self
         buildInterface()
@@ -114,6 +106,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     required init?(coder: NSCoder) { nil }
 
+    private static func makeWindow(showOnAllSpaces: Bool) -> NSWindow {
+        let contentRect = NSRect(x: 0, y: 0, width: 980, height: 620)
+        let baseStyle: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
+        let window: NSWindow
+        if showOnAllSpaces {
+            let panel = NSPanel(
+                contentRect: contentRect,
+                styleMask: baseStyle.union(.nonactivatingPanel),
+                backing: .buffered,
+                defer: false
+            )
+            panel.isFloatingPanel = false
+            panel.hidesOnDeactivate = false
+            panel.becomesKeyOnlyIfNeeded = true
+            window = panel
+        } else {
+            window = NSWindow(
+                contentRect: contentRect,
+                styleMask: baseStyle,
+                backing: .buffered,
+                defer: false
+            )
+        }
+        window.title = "FindAll"
+        window.titleVisibility = .hidden
+        window.minSize = NSSize(width: 720, height: 420)
+        window.isReleasedWhenClosed = false
+        return window
+    }
+
     deinit {
         saveWindowOriginWorkItem?.cancel()
         if let preferencesObserver { NotificationCenter.default.removeObserver(preferencesObserver) }
@@ -128,10 +150,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     func showAndFocusSearch() {
         refreshFilterControls()
         if window?.isVisible == false { positionWindowForPresentation() }
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        if windowUsesAllSpacesPresentation {
+            window?.orderFrontRegardless()
+            window?.makeKey()
+        } else {
+            showWindow(nil)
+            window?.makeKeyAndOrderFront(nil)
+        }
         window?.makeFirstResponder(searchField)
         showFullDiskAccessNoticeIfNeeded()
+    }
+
+    var showsOnAllSpaces: Bool { windowUsesAllSpacesPresentation }
+
+    var shouldHideForGlobalToggle: Bool {
+        guard let window, window.isVisible else { return false }
+        return windowUsesAllSpacesPresentation ? window.isKeyWindow : NSApp.isActive
     }
 
     private func buildInterface() {
@@ -470,7 +504,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         addColumn("name", title: L10n.string("Name"), width: 260, minimum: 140)
         addColumn("path", title: L10n.string("Path"), width: 360, minimum: 190)
-        addColumn("kind", title: L10n.string("Kind"), width: 120, minimum: 85)
+        addColumn("kind", title: L10n.string("Kind"), width: 120, minimum: 70)
         addColumn("size", title: L10n.string("Size"), width: 85, minimum: 70)
         addColumn("modified", title: L10n.string("Modified"), width: 145, minimum: 115)
         restoreColumnOrder()
@@ -1322,10 +1356,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         switch identifier.rawValue {
         case "name":
-            cell.textField?.stringValue = result.displayName
+            cell.textField?.stringValue = Self.singleLineDisplayText(result.displayName)
             cell.imageView?.image = NSWorkspace.shared.icon(forFile: result.url.path)
-        case "path": cell.textField?.stringValue = result.path
-        case "kind": cell.textField?.stringValue = result.kind
+        case "path": cell.textField?.stringValue = Self.singleLineDisplayText(result.path)
+        case "kind": cell.textField?.stringValue = Self.singleLineDisplayText(result.kind)
         case "size": cell.textField?.stringValue = result.size.map {
             ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
         } ?? "—"
@@ -1333,10 +1367,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         default: break
         }
         cell.fullToolTipText = identifier.rawValue == "kind" && !result.fullKind.isEmpty
-            ? result.fullKind
+            ? Self.singleLineDisplayText(result.fullKind)
             : cell.textField?.stringValue
         cell.updateToolTip()
         return cell
+    }
+
+    private static func singleLineDisplayText(_ value: String) -> String {
+        let normalized = value.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return normalized.isEmpty ? "—" : normalized
     }
 
     private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> ResultTableCellView {
@@ -1347,6 +1386,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         image.imageScaling = .scaleProportionallyDown
         let text = NSTextField(labelWithString: "")
         text.translatesAutoresizingMaskIntoConstraints = false
+        text.maximumNumberOfLines = 1
+        text.cell?.usesSingleLineMode = true
         text.lineBreakMode = .byTruncatingMiddle
         cell.addSubview(text)
         cell.textField = text
@@ -1598,11 +1639,46 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         guard let window else { return }
         window.level = keepOnTopSwitch.state == .on ? .floating : .normal
         var behavior = window.collectionBehavior
-        behavior.remove([.canJoinAllSpaces, .fullScreenAuxiliary])
+        behavior.remove([.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications])
         if allSpacesSwitch.state == .on {
-            behavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
+            behavior.insert([.canJoinAllSpaces, .canJoinAllApplications])
         }
         window.collectionBehavior = behavior
+    }
+
+    private func recreateWindowForSpaceModeChange() {
+        guard let oldWindow = window, let contentView = oldWindow.contentView else { return }
+        let frame = oldWindow.frame
+        let wasVisible = oldWindow.isVisible
+        let shouldRestoreSearchFocus = oldWindow.firstResponder === searchField.currentEditor()
+            || oldWindow.firstResponder === searchField
+
+        saveWindowOriginWorkItem?.cancel()
+        saveWindowOriginWorkItem = nil
+        oldWindow.delegate = nil
+        oldWindow.orderOut(nil)
+        oldWindow.contentView = nil
+
+        let replacement = Self.makeWindow(showOnAllSpaces: WindowPreferences.showOnAllSpaces)
+        replacement.setFrame(frame, display: false)
+        replacement.contentView = contentView
+        replacement.delegate = self
+        window = replacement
+        windowUsesAllSpacesPresentation = WindowPreferences.showOnAllSpaces
+        applyWindowBehavior()
+
+        if wasVisible {
+            if windowUsesAllSpacesPresentation {
+                replacement.orderFrontRegardless()
+                replacement.makeKey()
+            } else {
+                NSApp.activate(ignoringOtherApps: true)
+                replacement.makeKeyAndOrderFront(nil)
+            }
+            if shouldRestoreSearchFocus {
+                replacement.makeFirstResponder(searchField)
+            }
+        }
     }
 
     private func restoreWindowFrame() {
@@ -1664,6 +1740,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func windowPreferencesDidChange() {
+        if WindowPreferences.showOnAllSpaces != windowUsesAllSpacesPresentation {
+            recreateWindowForSpaceModeChange()
+        }
         let newColumnSizingMode = WindowPreferences.columnSizingMode
         let columnSizingModeChanged = newColumnSizingMode != activeColumnSizingMode
         if columnSizingModeChanged {

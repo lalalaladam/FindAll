@@ -119,7 +119,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showMainWindow(_ sender: Any?) {
-        NSApp.activate(ignoringOtherApps: true)
+        if !mainWindowController.showsOnAllSpaces {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         mainWindowController.showAndFocusSearch()
     }
 
@@ -153,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
                 DispatchQueue.main.async {
                     guard let delegate = NSApp.delegate as? AppDelegate else { return }
-                    if delegate.mainWindowController.window?.isVisible == true && NSApp.isActive {
+                    if delegate.mainWindowController.shouldHideForGlobalToggle {
                         delegate.mainWindowController.window?.orderOut(nil)
                     } else {
                         delegate.showMainWindow(nil)
