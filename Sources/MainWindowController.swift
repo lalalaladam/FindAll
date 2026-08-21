@@ -1849,16 +1849,18 @@ private final class ResultTableCellView: NSTableCellView {
     func updateToolTip() {
         guard let textField, textField.bounds.width > 0 else {
             toolTip = nil
+            textField?.toolTip = nil
             return
         }
-        textField.toolTip = nil
         let displayedText = textField.stringValue
         let completeText = fullToolTipText ?? displayedText
         let isAbbreviated = completeText != displayedText
-        let measuredWidth = ceil(textField.attributedStringValue.size().width)
-        toolTip = isAbbreviated || measuredWidth > floor(textField.bounds.width)
+        let isTruncated = !textField.expansionFrame(withFrame: textField.bounds).isEmpty
+        let resolvedToolTip = isAbbreviated || isTruncated
             ? completeText
             : nil
+        toolTip = resolvedToolTip
+        textField.toolTip = resolvedToolTip
     }
 }
 
