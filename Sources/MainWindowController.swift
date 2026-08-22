@@ -2,6 +2,8 @@ import AppKit
 import QuickLookUI
 
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTextViewDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
+    var onShowFolderContents: ((URL, NSWindow?) -> Void)?
+
     private let searchField = NSSearchField()
     private let pathInputScrollView = NSScrollView()
     private let pathInputTextView = PathInputTextView()
@@ -591,6 +593,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         tableView.target = self
         tableView.onQuickLook = { [weak self] in self?.toggleQuickLook(nil) }
         tableView.onOpen = { [weak self] in self?.openSelection(nil) }
+        tableView.onShowFolderContents = { [weak self] in self?.showFolderContents(nil) }
         tableView.onReveal = { [weak self] in self?.revealSelection(nil) }
         tableView.onShare = { [weak self] in self?.shareSelection(nil) }
         tableView.onGetInfo = { [weak self] in self?.showFinderInfo(nil) }
@@ -639,6 +642,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let reveal = menu.addItem(withTitle: L10n.string("Show in File Manager"), action: #selector(revealSelection(_:)), keyEquivalent: "")
         reveal.identifier = NSUserInterfaceItemIdentifier("command.reveal")
         reveal.target = self
+        let showFolderContents = menu.addItem(
+            withTitle: L10n.string("Show Folder Contents in New Window"),
+            action: #selector(showFolderContents(_:)),
+            keyEquivalent: ""
+        )
+        showFolderContents.identifier = NSUserInterfaceItemIdentifier("command.showFolderContents")
+        showFolderContents.target = self
         menu.addItem(.separator())
         let info = menu.addItem(withTitle: L10n.string("Get Info"), action: #selector(showFinderInfo(_:)), keyEquivalent: "")
         info.identifier = NSUserInterfaceItemIdentifier("command.getInfo")
@@ -1087,6 +1097,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         guard menu === tableView.menu else { return }
         updateOpenWithMenu(in: menu)
         updateRevealMenuItem(in: menu)
+        updateShowFolderContentsMenuItem(in: menu)
+    }
+
+    private func updateShowFolderContentsMenuItem(in menu: NSMenu) {
+        guard let item = menu.items.first(where: { $0.identifier?.rawValue == "command.showFolderContents" }) else { return }
+        item.isHidden = selectedFolderURLForContents == nil
     }
 
     private func updateRevealMenuItem(in menu: NSMenu) {
@@ -1684,6 +1700,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         FileManagerSupport.reveal(urls)
     }
 
+    @objc func showFolderContents(_ sender: Any?) {
+        guard let folderURL = selectedFolderURLForContents else { return }
+        onShowFolderContents?(folderURL, window)
+    }
+
+    private var selectedFolderURLForContents: URL? {
+        let selectedResults = tableView.selectedRowIndexes.compactMap { $0 < results.count ? results[$0] : nil }
+        guard selectedResults.count == 1, selectedResults[0].isBrowsableDirectory else { return nil }
+        return selectedResults[0].url
+    }
+
     @objc private func openSelectionWithApplication(_ sender: NSMenuItem) {
         let urls = selectedURLs
         guard let applicationURL = sender.representedObject as? URL, !urls.isEmpty else { return }
@@ -1813,6 +1840,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! { selectedURLs[index] as NSURL }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(showFolderContents(_:)) {
+            return selectedFolderURLForContents != nil
+        }
         if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(showFinderInfo(_:)), #selector(shareSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
             return !selectedURLs.isEmpty
         }
@@ -2159,6 +2189,7 @@ private final class PathInputTextView: NSTextView {
 private final class ActionTableView: NSTableView {
     var onQuickLook: (() -> Void)?
     var onOpen: (() -> Void)?
+    var onShowFolderContents: (() -> Void)?
     var onReveal: (() -> Void)?
     var onShare: (() -> Void)?
     var onGetInfo: (() -> Void)?
@@ -2179,6 +2210,8 @@ private final class ActionTableView: NSTableView {
     override func keyDown(with event: NSEvent) {
         if ShortcutSettings.shortcut(for: .open).matches(event) {
             onOpen?()
+        } else if ShortcutSettings.shortcut(for: .showFolderContents).matches(event) {
+            onShowFolderContents?()
         } else if ShortcutSettings.shortcut(for: .quickLook).matches(event) {
             onQuickLook?()
         } else if ShortcutSettings.shortcut(for: .reveal).matches(event) {
