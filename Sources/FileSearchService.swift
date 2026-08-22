@@ -42,6 +42,110 @@ enum FilePathSupport {
     }
 }
 
+enum PathInputParser {
+    static func parse(_ text: String) -> [String] {
+        let characters = Array(text)
+        var results: [String] = []
+        var current = ""
+        var quote: Character?
+        var preservesOuterWhitespace = false
+        var index = 0
+
+        func normalizedCurrent() -> String {
+            preservesOuterWhitespace
+                ? current
+                : current.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        func startsPath(at candidateIndex: Int) -> Bool {
+            guard characters.indices.contains(candidateIndex) else { return false }
+            var start = candidateIndex
+            if characters[start] == "\"" || characters[start] == "'" {
+                start += 1
+                guard characters.indices.contains(start) else { return false }
+            }
+            if characters[start] == "/" { return true }
+            if characters[start] == "~",
+               characters.indices.contains(start + 1), characters[start + 1] == "/" {
+                return true
+            }
+            let remainder = String(characters[start...]).lowercased()
+            return remainder.hasPrefix("file:")
+        }
+
+        func appendCurrent() {
+            let value = normalizedCurrent()
+            if !value.isEmpty { results.append(value) }
+            current = ""
+            preservesOuterWhitespace = false
+        }
+
+        while index < characters.count {
+            let character = characters[index]
+            if let activeQuote = quote {
+                if character == activeQuote {
+                    quote = nil
+                } else if character == "\\", activeQuote == "\"",
+                          characters.indices.contains(index + 1),
+                          ["\\", "\""].contains(characters[index + 1]) {
+                    index += 1
+                    current.append(characters[index])
+                } else {
+                    current.append(character)
+                }
+                index += 1
+                continue
+            }
+
+            if (character == "\"" || character == "'") && current.isEmpty {
+                quote = character
+                preservesOuterWhitespace = true
+                index += 1
+                continue
+            }
+
+            if character == "\n" || character == "\r" {
+                appendCurrent()
+                index += 1
+                continue
+            }
+
+            if character.isWhitespace {
+                var nextIndex = index
+                while nextIndex < characters.count,
+                      characters[nextIndex].isWhitespace,
+                      characters[nextIndex] != "\n",
+                      characters[nextIndex] != "\r" {
+                    nextIndex += 1
+                }
+                if !normalizedCurrent().isEmpty, startsPath(at: nextIndex) {
+                    appendCurrent()
+                    index = nextIndex
+                    continue
+                }
+                current.append(contentsOf: characters[index..<nextIndex])
+                index = nextIndex
+                continue
+            }
+
+            if character == "\\", characters.indices.contains(index + 1),
+               characters[index + 1].isWhitespace || characters[index + 1] == "\\"
+                    || characters[index + 1] == "\"" || characters[index + 1] == "'" {
+                index += 1
+                current.append(characters[index])
+                index += 1
+                continue
+            }
+
+            current.append(character)
+            index += 1
+        }
+
+        appendCurrent()
+        return results
+    }
+}
+
 struct SearchResult: Hashable {
     let url: URL
     let displayName: String
@@ -60,6 +164,7 @@ struct SearchRequest: Equatable {
     let category: SearchCategory
     let scopePath: String?
     let matchMode: SearchMatchMode
+    let pathInputs: [String]?
 }
 
 enum SearchFailure {
@@ -78,7 +183,49 @@ enum SearchUpdate {
     case started
     case gathering(Int)
     case results([SearchResult], coverage: SearchResultCoverage)
+    case pathStarted(Int)
+    case pathResults([SearchResult], summary: PathSearchSummary)
     case failed(SearchFailure)
+}
+
+struct PathSearchSummary {
+    let submittedCount: Int
+    let notFoundCount: Int
+    let inaccessibleCount: Int
+    let invalidCount: Int
+    let duplicateCount: Int
+    let omittedCount: Int
+    let issues: [PathSearchIssue]
+    let hasMoreIssues: Bool
+}
+
+struct PathSearchIssue {
+    enum Reason {
+        case notFound
+        case inaccessible
+        case invalid
+        case duplicate
+    }
+
+    let input: String
+    let reason: Reason
+}
+
+private final class PathSearchCancellationToken {
+    private let lock = NSLock()
+    private var isCancelledStorage = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isCancelledStorage
+    }
+
+    func cancel() {
+        lock.lock()
+        isCancelledStorage = true
+        lock.unlock()
+    }
 }
 
 final class FileSearchService: NSObject {
@@ -87,11 +234,18 @@ final class FileSearchService: NSObject {
     /// Keeps broad searches bounded while allowing the UI to rank a substantially
     /// larger candidate set than it displays.
     private let candidateLimit = 20_000
+    private let pathInputLimit = 1_000
     private let queryTimeout: TimeInterval = 30
+    private let pathQueue = DispatchQueue(
+        label: "com.lalalaladam.FindAll.path-search",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
     private var generation = 0
     private var timeoutWorkItem: DispatchWorkItem?
     private var activeQuery: NSMetadataQuery?
     private var activeRequest: SearchRequest?
+    private var activePathSearchToken: PathSearchCancellationToken?
     private var notificationTokens: [NSObjectProtocol] = []
 
     func search(_ request: SearchRequest) {
@@ -99,6 +253,16 @@ final class FileSearchService: NSObject {
         generation += 1
         let currentGeneration = generation
         stopActiveQuery()
+
+        if request.matchMode == .path {
+            let inputs = request.pathInputs ?? PathInputParser.parse(request.text)
+            guard inputs.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+                onUpdate?(.idle)
+                return
+            }
+            startPathSearch(inputs, generation: currentGeneration)
+            return
+        }
 
         let trimmed = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -110,7 +274,8 @@ final class FileSearchService: NSObject {
             text: trimmed,
             category: request.category,
             scopePath: request.scopePath,
-            matchMode: request.matchMode
+            matchMode: request.matchMode,
+            pathInputs: nil
         )
         startQuery(normalizedRequest, generation: currentGeneration)
     }
@@ -167,6 +332,23 @@ final class FileSearchService: NSObject {
         }
         self.timeoutWorkItem = timeoutWorkItem
         DispatchQueue.main.asyncAfter(deadline: .now() + queryTimeout, execute: timeoutWorkItem)
+    }
+
+    private func startPathSearch(_ inputs: [String], generation: Int) {
+        guard generation == self.generation else { return }
+        let token = PathSearchCancellationToken()
+        activePathSearchToken = token
+        onUpdate?(.pathStarted(inputs.count))
+        let limit = pathInputLimit
+        pathQueue.async { [weak self] in
+            let output = Self.resolvePaths(inputs, limit: limit) { token.isCancelled }
+            DispatchQueue.main.async {
+                guard let self, generation == self.generation,
+                      self.activePathSearchToken === token else { return }
+                self.activePathSearchToken = nil
+                self.onUpdate?(.pathResults(output.results, summary: output.summary))
+            }
+        }
     }
 
     private func observe(_ query: NSMetadataQuery, request: SearchRequest, generation: Int) {
@@ -229,6 +411,8 @@ final class FileSearchService: NSObject {
     }
 
     private func stopActiveQuery() {
+        activePathSearchToken?.cancel()
+        activePathSearchToken = nil
         timeoutWorkItem?.cancel()
         timeoutWorkItem = nil
         removeNotificationObservers()
@@ -257,6 +441,8 @@ final class FileSearchService: NSObject {
             namePredicate = NSPredicate(format: "%K BEGINSWITH[cd] %@", nameKey, request.text)
         case .exact:
             namePredicate = NSPredicate(format: "%K ==[cd] %@", nameKey, request.text)
+        case .path:
+            namePredicate = NSPredicate(value: false)
         }
         guard let categoryPredicate = request.category.metadataPredicate else { return namePredicate }
         return NSCompoundPredicate(andPredicateWithSubpredicates: [namePredicate, categoryPredicate])
@@ -318,6 +504,164 @@ final class FileSearchService: NSObject {
             return name.range(of: request.text, options: options.union(.anchored)) != nil
         case .exact:
             return name.compare(request.text, options: options) == .orderedSame
+        case .path:
+            return false
+        }
+    }
+
+    private struct PathSearchOutput {
+        var results: [SearchResult]
+        var summary: PathSearchSummary
+    }
+
+    private enum PathResolutionFailure: Error {
+        case notFound
+        case inaccessible
+    }
+
+    private static func resolvePaths(
+        _ inputs: [String],
+        limit: Int,
+        isCancelled: () -> Bool
+    ) -> PathSearchOutput {
+        let submittedCount = inputs.count
+        let limitedInputs = Array(inputs.prefix(limit))
+        var results: [SearchResult] = []
+        var seenPaths = Set<String>()
+        var notFoundCount = 0
+        var inaccessibleCount = 0
+        var invalidCount = 0
+        var duplicateCount = 0
+        var issues: [PathSearchIssue] = []
+
+        func recordIssue(_ input: String, reason: PathSearchIssue.Reason) {
+            if issues.count < 50 {
+                issues.append(PathSearchIssue(input: input, reason: reason))
+            }
+        }
+
+        for input in limitedInputs {
+            if isCancelled() { break }
+            guard let url = pathURL(from: input) else {
+                invalidCount += 1
+                recordIssue(input, reason: .invalid)
+                continue
+            }
+            let normalizedURL = FilePathSupport.userFacingURL(url).standardizedFileURL
+            guard seenPaths.insert(normalizedURL.path).inserted else {
+                duplicateCount += 1
+                recordIssue(input, reason: .duplicate)
+                continue
+            }
+            switch result(for: normalizedURL) {
+            case let .success(result):
+                results.append(result)
+            case let .failure(failure):
+                switch failure {
+                case .notFound:
+                    notFoundCount += 1
+                    recordIssue(input, reason: .notFound)
+                case .inaccessible:
+                    inaccessibleCount += 1
+                    recordIssue(input, reason: .inaccessible)
+                }
+            }
+        }
+
+        return PathSearchOutput(
+            results: results,
+            summary: PathSearchSummary(
+                submittedCount: submittedCount,
+                notFoundCount: notFoundCount,
+                inaccessibleCount: inaccessibleCount,
+                invalidCount: invalidCount,
+                duplicateCount: duplicateCount,
+                omittedCount: max(0, submittedCount - limitedInputs.count),
+                issues: issues,
+                hasMoreIssues: notFoundCount + inaccessibleCount + invalidCount + duplicateCount > issues.count
+            )
+        )
+    }
+
+    private static func pathURL(from input: String) -> URL? {
+        var value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if value.count >= 2,
+           let first = value.first,
+           let last = value.last,
+           (first == "\"" && last == "\"" || first == "'" && last == "'") {
+            value.removeFirst()
+            value.removeLast()
+        }
+        guard !value.isEmpty else { return nil }
+
+        if value.lowercased().hasPrefix("file:") {
+            guard let url = URL(string: value), url.isFileURL,
+                  url.host == nil || url.host?.isEmpty == true || url.host == "localhost" else { return nil }
+            return url.standardizedFileURL
+        }
+
+        let expanded = (value as NSString).expandingTildeInPath
+        guard expanded.hasPrefix("/") else { return nil }
+        return URL(fileURLWithPath: expanded).standardizedFileURL
+    }
+
+    private static func result(for url: URL) -> Result<SearchResult, PathResolutionFailure> {
+        let requiredKeys: Set<URLResourceKey> = [
+            .contentModificationDateKey,
+            .fileSizeKey,
+            .isDirectoryKey,
+            .isPackageKey
+        ]
+        do {
+            let values = try url.resourceValues(forKeys: requiredKeys)
+            let descriptiveValues = try? url.resourceValues(forKeys: [
+                .contentTypeKey,
+                .localizedNameKey,
+                .localizedTypeDescriptionKey
+            ])
+            let isDirectory = values.isDirectory == true && values.isPackage != true
+            let fallbackContentType: UTType? = {
+                if values.isDirectory == true && values.isPackage != true { return .folder }
+                guard !url.pathExtension.isEmpty else { return nil }
+                return UTType(filenameExtension: url.pathExtension)
+            }()
+            let contentType = descriptiveValues?.contentType ?? fallbackContentType
+            let displayName = descriptiveValues?.localizedName
+                ?? (url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent)
+            let fullKind = descriptiveValues?.localizedTypeDescription
+                ?? contentType?.localizedDescription
+                ?? ""
+            let contentTypeIdentifier = contentType?.identifier
+            return .success(SearchResult(
+                url: url,
+                displayName: displayName,
+                kind: SearchResultKindSupport.displayKind(
+                    for: url,
+                    contentTypeIdentifier: contentTypeIdentifier,
+                    fullKind: fullKind,
+                    isDirectory: isDirectory
+                ),
+                fullKind: fullKind,
+                contentTypeIdentifier: contentTypeIdentifier,
+                size: values.isDirectory == true ? nil : values.fileSize.map(Int64.init),
+                modifiedAt: values.contentModificationDate,
+                isDirectory: isDirectory
+            ))
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == NSCocoaErrorDomain {
+                let cocoaCode = CocoaError.Code(rawValue: nsError.code)
+                if cocoaCode == .fileNoSuchFile || cocoaCode == .fileReadNoSuchFile {
+                    return .failure(.notFound)
+                }
+                if cocoaCode == .fileReadNoPermission {
+                    return .failure(.inaccessible)
+                }
+            }
+            return FileManager.default.fileExists(atPath: url.path)
+                ? .failure(.inaccessible)
+                : .failure(.notFound)
         }
     }
 
@@ -359,6 +703,7 @@ final class FileSearchService: NSObject {
     }
 
     deinit {
+        activePathSearchToken?.cancel()
         removeNotificationObservers()
         activeQuery?.stop()
     }

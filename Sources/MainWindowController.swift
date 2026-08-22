@@ -3,6 +3,7 @@ import QuickLookUI
 
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
     private let searchField = NSSearchField()
+    private let searchFieldEditor = PathFieldEditor()
     private let matchModeControl = NSSegmentedControl(
         labels: SearchMatchMode.allCases.map(\.title),
         trackingMode: .selectOne,
@@ -24,6 +25,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var candidates: [SearchResult] = []
     private var results: [SearchResult] = []
     private var lastSearchRequest: SearchRequest?
+    private var pendingPathInputs: [String]?
+    private var isApplyingPathPaste = false
+    private var isChangingMatchMode = false
     private var preferencesObserver: NSObjectProtocol?
     private var windowPreferencesObserver: NSObjectProtocol?
     private var resetColumnLayoutObserver: NSObjectProtocol?
@@ -56,11 +60,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     init() {
         let window = Self.makeWindow(showOnAllSpaces: WindowPreferences.showOnAllSpaces)
         super.init(window: window)
+        restoreWindowFrame()
         window.delegate = self
         buildInterface()
-        restoreWindowFrame()
         restoreWindowBehavior()
         bindSearch()
+        updateIdleStatus()
         preferencesObserver = NotificationCenter.default.addObserver(
             forName: SearchPreferences.didChangeNotification,
             object: nil,
@@ -168,6 +173,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         return windowUsesAllSpacesPresentation ? window.isKeyWindow : NSApp.isActive
     }
 
+    func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
+        guard let control = client as? NSSearchField, control === searchField else { return nil }
+        searchFieldEditor.isFieldEditor = true
+        searchFieldEditor.isRichText = false
+        searchFieldEditor.allowsUndo = true
+        return searchFieldEditor
+    }
+
     private func buildInterface() {
         guard let content = window?.contentView else { return }
         searchField.placeholderString = L10n.string("Search files, folders, and applications")
@@ -177,6 +190,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         searchField.target = self
         searchField.action = #selector(executeSearch(_:))
         searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchFieldEditor.onPaste = { [weak self] pasteboard in
+            self?.handlePathPaste(from: pasteboard) ?? false
+        }
 
         matchModeControl.controlSize = .regular
         matchModeControl.segmentStyle = .rounded
@@ -185,7 +201,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         for (index, mode) in SearchMatchMode.allCases.enumerated() {
             matchModeControl.setToolTip(mode.toolTip, forSegment: index)
         }
-        matchModeControl.setAccessibilityLabel(L10n.string("Name matching"))
+        matchModeControl.setAccessibilityLabel(L10n.string("Search mode"))
         matchModeControl.translatesAutoresizingMaskIntoConstraints = false
 
         configureFilterControls()
@@ -249,7 +265,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
             matchModeControl.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
             matchModeControl.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
-            matchModeControl.widthAnchor.constraint(equalToConstant: 230),
+            matchModeControl.widthAnchor.constraint(equalToConstant: 280),
             matchModeControl.heightAnchor.constraint(equalToConstant: 28),
 
             filterBar.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 5),
@@ -277,7 +293,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         ])
 
         refreshFilterControls()
-        DispatchQueue.main.async { [weak self] in self?.layoutColumns(initialLayout: true) }
+        content.layoutSubtreeIfNeeded()
+        scrollView.layoutSubtreeIfNeeded()
+        layoutColumns(initialLayout: true)
     }
 
     private func filterLabel(_ text: String) -> NSTextField {
@@ -432,7 +450,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         prioritizeFoldersButton.state = SearchPreferences.prioritizeFolderRules ? .on : .off
         foldersFirstButton.state = SearchPreferences.foldersFirst ? .on : .off
         matchModeControl.selectedSegment = SearchMatchMode.allCases.firstIndex(of: SearchPreferences.matchMode) ?? 0
+        updateControlsForSearchMode()
         synchronizeTableSortDescriptor()
+    }
+
+    private func updateControlsForSearchMode() {
+        let isPathMode = SearchPreferences.matchMode == .path
+        scopePopup.isEnabled = !isPathMode
+        categoryPopup.isEnabled = !isPathMode
+        prioritizeFoldersButton.isEnabled = !isPathMode
+        foldersFirstButton.isEnabled = !isPathMode
+        searchField.placeholderString = isPathMode
+            ? L10n.string("Paste one or more file or folder paths")
+            : L10n.string("Search files, folders, and applications")
     }
 
     private func scopeTitle(for path: String, among paths: [String]) -> String {
@@ -1071,12 +1101,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 self.candidates = []
                 self.applyRanking()
                 self.spinner.stopAnimation(nil)
-                self.statusLabel.stringValue = L10n.string("Type a query and press Return")
+                self.updateIdleStatus()
             case .started:
                 self.tableView.deselectAll(nil)
                 self.spinner.startAnimation(nil)
+                self.statusLabel.toolTip = nil
                 self.statusLabel.stringValue = L10n.string("Starting Spotlight search…")
+            case let .pathStarted(count):
+                self.tableView.deselectAll(nil)
+                self.spinner.startAnimation(nil)
+                self.statusLabel.toolTip = nil
+                self.statusLabel.stringValue = String.localizedStringWithFormat(
+                    L10n.string("Resolving %lld paths…"),
+                    Int64(count)
+                )
             case let .gathering(count):
+                self.statusLabel.toolTip = nil
                 self.statusLabel.stringValue = String.localizedStringWithFormat(
                     L10n.string("Searching… %lld candidates found"),
                     Int64(count)
@@ -1085,6 +1125,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 self.candidates = results
                 self.applyRanking()
                 self.spinner.stopAnimation(nil)
+                self.statusLabel.toolTip = nil
                 switch coverage {
                 case .candidateLimitReached:
                     self.statusLabel.stringValue = String.localizedStringWithFormat(
@@ -1108,10 +1149,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                         ? L10n.string("No matching Spotlight results. Protected locations may require Full Disk Access.")
                         : String.localizedStringWithFormat(L10n.string("%lld results"), Int64(self.results.count))
                 }
+            case let .pathResults(results, summary):
+                self.candidates = results
+                self.applyRanking()
+                self.spinner.stopAnimation(nil)
+                self.statusLabel.stringValue = Self.pathStatus(summary: summary, foundCount: self.results.count)
+                self.statusLabel.toolTip = Self.pathIssueToolTip(summary: summary)
             case let .failed(failure):
                 self.candidates = []
                 self.applyRanking()
                 self.spinner.stopAnimation(nil)
+                self.statusLabel.toolTip = nil
                 switch failure {
                 case .couldNotStart:
                     self.statusLabel.stringValue = L10n.string("Spotlight search could not start.")
@@ -1123,18 +1171,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func currentRequest() -> SearchRequest {
-        SearchRequest(
+        let matchMode = SearchPreferences.matchMode
+        return SearchRequest(
             text: searchField.stringValue,
-            category: SearchPreferences.category,
-            scopePath: SearchPreferences.scopePath,
-            matchMode: SearchPreferences.matchMode
+            category: matchMode == .path ? .all : SearchPreferences.category,
+            scopePath: matchMode == .path ? nil : SearchPreferences.scopePath,
+            matchMode: matchMode,
+            pathInputs: matchMode == .path ? pendingPathInputs : nil
         )
     }
 
     private func performSearch() {
-        activeSortMode = SearchPreferences.sortMode
-        synchronizeTableSortDescriptor()
         let request = currentRequest()
+        activeSortMode = request.matchMode == .path ? .smart : SearchPreferences.sortMode
+        synchronizeTableSortDescriptor()
         lastSearchRequest = request
         searchService.search(request)
     }
@@ -1146,6 +1196,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             observedDefaultSortMode = defaultSortMode
             activeSortMode = defaultSortMode
             synchronizeTableSortDescriptor()
+        }
+        if isChangingMatchMode {
+            applyRanking()
+            return
         }
         let request = currentRequest()
         if !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -1173,10 +1227,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let foldersFirst = SearchPreferences.foldersFirst
         let prioritizeFolderRules = SearchPreferences.prioritizeFolderRules
         let folderRules = SearchPreferences.folderRules
+        let preservesPathInputOrder = lastSearchRequest?.matchMode == .path && sortMode == .smart
+        let pathInputOrder = Dictionary(uniqueKeysWithValues: candidates.enumerated().map {
+            ($0.element.url.standardizedFileURL, $0.offset)
+        })
         let rankings = candidates.reduce(into: [URL: (priority: Int, ruleOrder: Int)]()) { values, result in
             values[result.url] = SearchPreferences.ranking(for: result.url, rules: folderRules)
         }
         let sortedCandidates = candidates.sorted { lhs, rhs in
+            if preservesPathInputOrder {
+                return (pathInputOrder[lhs.url.standardizedFileURL] ?? Int.max)
+                    < (pathInputOrder[rhs.url.standardizedFileURL] ?? Int.max)
+            }
             if prioritizeFolderRules {
                 let lhsRanking = rankings[lhs.url] ?? (priority: Int.max, ruleOrder: Int.max)
                 let rhsRanking = rankings[rhs.url] ?? (priority: Int.max, ruleOrder: Int.max)
@@ -1244,18 +1306,85 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        if !isApplyingPathPaste {
+            pendingPathInputs = nil
+            searchField.toolTip = nil
+        }
         searchService.cancel()
         lastSearchRequest = nil
-        if !searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            statusLabel.stringValue = L10n.string("Press Return to search")
-        }
+        updateIdleStatus()
     }
 
     @objc private func executeSearch(_ sender: Any?) { performSearch() }
 
     @objc private func matchModeChanged(_ sender: NSSegmentedControl) {
         guard SearchMatchMode.allCases.indices.contains(sender.selectedSegment) else { return }
-        SearchPreferences.matchMode = SearchMatchMode.allCases[sender.selectedSegment]
+        let mode = SearchMatchMode.allCases[sender.selectedSegment]
+        guard mode != SearchPreferences.matchMode else { return }
+        searchService.cancel()
+        lastSearchRequest = nil
+        if mode != .path {
+            pendingPathInputs = nil
+            searchField.toolTip = nil
+        }
+        isChangingMatchMode = true
+        SearchPreferences.matchMode = mode
+        isChangingMatchMode = false
+        updateControlsForSearchMode()
+        updateIdleStatus()
+    }
+
+    private func handlePathPaste(from pasteboard: NSPasteboard) -> Bool {
+        guard SearchPreferences.matchMode == .path else { return false }
+
+        let inputs: [String]
+        let urlOptions: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        if let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: urlOptions) as? [NSURL],
+           !objects.isEmpty {
+            inputs = objects.map { ($0 as URL).path }
+        } else if let text = pasteboard.string(forType: .string) {
+            inputs = PathInputParser.parse(text)
+        } else {
+            return false
+        }
+        guard let firstInput = inputs.first else { return false }
+
+        pendingPathInputs = inputs
+        isApplyingPathPaste = true
+        searchField.stringValue = firstInput
+        searchFieldEditor.string = firstInput
+        searchFieldEditor.setSelectedRange(NSRange(location: (firstInput as NSString).length, length: 0))
+        isApplyingPathPaste = false
+        searchField.toolTip = inputs.count > 1 ? inputs.prefix(20).joined(separator: "\n") : nil
+
+        searchService.cancel()
+        lastSearchRequest = nil
+        statusLabel.stringValue = inputs.count > 1
+            ? String.localizedStringWithFormat(L10n.string("%lld paths ready; press Return"), Int64(inputs.count))
+            : L10n.string("Press Return to resolve paths")
+        statusLabel.toolTip = nil
+        return true
+    }
+
+    private func updateIdleStatus() {
+        statusLabel.toolTip = nil
+        let hasText = !searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if SearchPreferences.matchMode == .path {
+            if let pendingPathInputs, pendingPathInputs.count > 1 {
+                statusLabel.stringValue = String.localizedStringWithFormat(
+                    L10n.string("%lld paths ready; press Return"),
+                    Int64(pendingPathInputs.count)
+                )
+            } else {
+                statusLabel.stringValue = hasText
+                    ? L10n.string("Press Return to resolve paths")
+                    : L10n.string("Paste paths and press Return")
+            }
+        } else {
+            statusLabel.stringValue = hasText
+                ? L10n.string("Press Return to search")
+                : L10n.string("Type a query and press Return")
+        }
     }
 
     @objc private func categoryMenuItemSelected(_ sender: NSMenuItem) {
@@ -1583,6 +1712,70 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         "pages", "numbers", "key", "odt", "ods", "odp"
     ]
 
+    private static func pathStatus(summary: PathSearchSummary, foundCount: Int) -> String {
+        var parts = [foundCount == 0
+            ? L10n.string("No paths could be resolved")
+            : String.localizedStringWithFormat(L10n.string("%lld path results"), Int64(foundCount))]
+        if summary.notFoundCount > 0 {
+            parts.append(String.localizedStringWithFormat(
+                L10n.string("%lld not found"),
+                Int64(summary.notFoundCount)
+            ))
+        }
+        if summary.inaccessibleCount > 0 {
+            parts.append(String.localizedStringWithFormat(
+                L10n.string("%lld inaccessible"),
+                Int64(summary.inaccessibleCount)
+            ))
+        }
+        if summary.invalidCount > 0 {
+            parts.append(String.localizedStringWithFormat(
+                L10n.string("%lld invalid"),
+                Int64(summary.invalidCount)
+            ))
+        }
+        if summary.duplicateCount > 0 {
+            parts.append(String.localizedStringWithFormat(
+                L10n.string("%lld duplicates ignored"),
+                Int64(summary.duplicateCount)
+            ))
+        }
+        if summary.omittedCount > 0 {
+            parts.append(String.localizedStringWithFormat(
+                L10n.string("%lld paths omitted by the input limit"),
+                Int64(summary.omittedCount)
+            ))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func pathIssueToolTip(summary: PathSearchSummary) -> String? {
+        guard !summary.issues.isEmpty || summary.omittedCount > 0 else { return nil }
+        var lines = summary.issues.map { issue in
+            let input = singleLineDisplayText(issue.input)
+            switch issue.reason {
+            case .notFound:
+                return String.localizedStringWithFormat(L10n.string("Not found: %@"), input)
+            case .inaccessible:
+                return String.localizedStringWithFormat(L10n.string("Inaccessible: %@"), input)
+            case .invalid:
+                return String.localizedStringWithFormat(L10n.string("Invalid path: %@"), input)
+            case .duplicate:
+                return String.localizedStringWithFormat(L10n.string("Duplicate ignored: %@"), input)
+            }
+        }
+        if summary.hasMoreIssues {
+            lines.append(L10n.string("More path issues are not shown."))
+        }
+        if summary.omittedCount > 0 {
+            lines.append(String.localizedStringWithFormat(
+                L10n.string("%lld paths omitted by the input limit"),
+                Int64(summary.omittedCount)
+            ))
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private static func compare<T: Comparable>(_ lhs: T?, _ rhs: T?) -> ComparisonResult {
         switch (lhs, rhs) {
         case let (left?, right?):
@@ -1792,6 +1985,15 @@ private final class WindowDragStackView: NSStackView {
 
     override func mouseDown(with event: NSEvent) {
         window?.performDrag(with: event)
+    }
+}
+
+private final class PathFieldEditor: NSTextView {
+    var onPaste: ((NSPasteboard) -> Bool)?
+
+    override func paste(_ sender: Any?) {
+        if onPaste?(NSPasteboard.general) == true { return }
+        super.paste(sender)
     }
 }
 

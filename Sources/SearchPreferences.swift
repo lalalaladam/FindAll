@@ -127,12 +127,14 @@ enum SearchMatchMode: String, CaseIterable, Codable {
     case contains
     case prefix
     case exact
+    case path
 
     var title: String {
         switch self {
         case .contains: return L10n.string("Contains")
         case .prefix: return L10n.string("Starts With")
         case .exact: return L10n.string("Exact")
+        case .path: return L10n.string("Path")
         }
     }
 
@@ -144,6 +146,8 @@ enum SearchMatchMode: String, CaseIterable, Codable {
             return L10n.string("Matches file names that start with the entered text")
         case .exact:
             return L10n.string("Matches the complete file name")
+        case .path:
+            return L10n.string("Resolves one or more complete file or folder paths")
         }
     }
 }
