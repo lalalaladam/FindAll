@@ -1578,7 +1578,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         text.cell?.usesSingleLineMode = true
         text.lineBreakMode = .byTruncatingMiddle
         if identifier.rawValue == "modified" {
-            text.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            text.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            text.alignment = .right
         }
         cell.addSubview(text)
         cell.textField = text

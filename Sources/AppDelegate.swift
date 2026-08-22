@@ -132,21 +132,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         _ = UserDefaults.standard.synchronize()
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        configuration.createsNewApplicationInstance = true
-        configuration.environment = [
-            Self.relaunchDockIconEnvironmentKey: WindowPreferences.showDockIcon ? "1" : "0"
-        ]
-        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { [weak self] _, error in
-            DispatchQueue.main.async {
-                if let error {
-                    self?.registerGlobalHotKey()
-                    onFailure(error)
-                } else {
-                    NSApp.terminate(nil)
+        let shouldShowDockIcon = WindowPreferences.showDockIcon
+        let previousActivationPolicy = NSApp.activationPolicy()
+        let transitionedToAgent = !shouldShowDockIcon
+            && previousActivationPolicy == .regular
+            && NSApp.setActivationPolicy(.accessory)
+
+        let launchReplacement = { [weak self] in
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.createsNewApplicationInstance = true
+            configuration.environment = [
+                Self.relaunchDockIconEnvironmentKey: shouldShowDockIcon ? "1" : "0"
+            ]
+            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
+                DispatchQueue.main.async {
+                    if let error {
+                        if transitionedToAgent {
+                            _ = NSApp.setActivationPolicy(previousActivationPolicy)
+                        }
+                        self?.registerGlobalHotKey()
+                        onFailure(error)
+                    } else {
+                        NSApp.terminate(nil)
+                    }
                 }
             }
+        }
+
+        // On macOS 27, let Dock observe the foreground-to-agent transition before
+        // starting the replacement process. Otherwise the overlapping process lifetimes
+        // can be presented as the app continuing to run in the background.
+        if transitionedToAgent {
+            DispatchQueue.main.async(execute: launchReplacement)
+        } else {
+            launchReplacement()
         }
     }
 
