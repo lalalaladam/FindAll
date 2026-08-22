@@ -164,6 +164,10 @@ private enum FolderContentsSortMode: String {
     case modifiedAscending
     case modifiedDescending
 
+    var isSizeSort: Bool {
+        self == .sizeAscending || self == .sizeDescending
+    }
+
     var descriptor: NSSortDescriptor? {
         switch self {
         case .smart: return nil
@@ -247,7 +251,9 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
     private var loadGeneration = 0
     private var groupsByType: Bool
     private var activeSortMode: FolderContentsSortMode
+    private var sizeSortFolderOrder: [String: Int]?
     private var isSynchronizingSort = false
+    private var isAdjustingColumns = false
     private var hasBecomeKey = false
     private var preferencesObserver: NSObjectProtocol?
     private var sharingServicePicker: NSSharingServicePicker?
@@ -256,7 +262,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
     init(folderURL: URL) {
         self.folderURL = folderURL
         groupsByType = FolderContentsPreferences.groupsByType
-        activeSortMode = groupsByType ? .smart : .modifiedDescending
+        activeSortMode = .smart
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -267,7 +273,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         window.delegate = self
         window.title = FileManager.default.displayName(atPath: folderURL.path)
         window.representedURL = folderURL
-        window.minSize = NSSize(width: 620, height: 360)
+        window.minSize = NSSize(width: 720, height: 360)
         window.isReleasedWhenClosed = false
         buildInterface()
         applyWindowBehavior()
@@ -314,22 +320,28 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         pathLabel.textColor = .secondaryLabelColor
         pathLabel.toolTip = folderURL.path
         pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         refreshButton.bezelStyle = .texturedRounded
         refreshButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: L10n.string("Refresh"))
         refreshButton.toolTip = L10n.string("Refresh")
         refreshButton.target = self
         refreshButton.action = #selector(refresh(_:))
+        refreshButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        refreshButton.setContentHuggingPriority(.required, for: .horizontal)
 
         groupingButton.controlSize = .small
         groupingButton.state = groupsByType ? .on : .off
         groupingButton.toolTip = L10n.string("Group by Type")
         groupingButton.target = self
         groupingButton.action = #selector(groupingChanged(_:))
+        groupingButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        groupingButton.setContentHuggingPriority(.required, for: .horizontal)
 
         let topBar = NSStackView(views: [pathLabel, groupingButton, refreshButton])
         topBar.orientation = .horizontal
         topBar.alignment = .centerY
+        topBar.distribution = .fill
         topBar.spacing = 8
         topBar.translatesAutoresizingMaskIntoConstraints = false
 
@@ -365,8 +377,8 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
             topBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
             topBar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
             scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
             separator.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
             separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
@@ -375,6 +387,8 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
             statusBar.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -12),
             statusBar.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -7)
         ])
+        contentView.layoutSubtreeIfNeeded()
+        layoutColumns()
     }
 
     private func configureOutlineView() {
@@ -383,10 +397,13 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         outlineView.allowsMultipleSelection = true
         outlineView.allowsEmptySelection = true
         outlineView.usesAlternatingRowBackgroundColors = true
+        outlineView.style = .plain
         outlineView.rowHeight = 28
-        outlineView.indentationPerLevel = 14
+        outlineView.indentationPerLevel = 0
         outlineView.autosaveExpandedItems = false
-        outlineView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        outlineView.intercellSpacing = NSSize(width: 0, height: outlineView.intercellSpacing.height)
+        outlineView.columnAutoresizingStyle = .noColumnAutoresizing
+        outlineView.autoresizingMask = [.height]
         outlineView.target = self
         outlineView.doubleAction = #selector(openSelection(_:))
         outlineView.onOpen = { [weak self] in self?.openSelection(nil) }
@@ -402,10 +419,26 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         outlineView.setDraggingSourceOperationMask(.copy, forLocal: true)
         outlineView.setDraggingSourceOperationMask(.copy, forLocal: false)
 
-        addColumn("name", title: L10n.string("Name"), width: 330, minimum: 190)
-        addColumn("kind", title: L10n.string("Kind"), width: 145, minimum: 90)
-        addColumn("size", title: L10n.string("Size"), width: 90, minimum: 75)
-        addColumn("modified", title: L10n.string("Modified"), width: 165, minimum: 125)
+        let fittedHeaderView = FittedTableHeaderView()
+        fittedHeaderView.usesFittedResizing = { true }
+        fittedHeaderView.resizeDirections = { [weak self] dividerIndex in
+            self?.fittedResizeDirections(at: dividerIndex) ?? (false, false)
+        }
+        fittedHeaderView.onResizeWillBegin = { [weak self] in self?.isAdjustingColumns = true }
+        fittedHeaderView.onResize = { [weak self] dividerIndex, initialWidths, delta in
+            self?.resizeFittedColumns(at: dividerIndex, initialWidths: initialWidths, delta: delta)
+        }
+        fittedHeaderView.onResizeDidEnd = { [weak self] in
+            guard let self else { return }
+            self.isAdjustingColumns = false
+            self.layoutColumns()
+        }
+        outlineView.headerView = fittedHeaderView
+
+        addColumn("name", title: L10n.string("Name"), width: 400, minimum: 190)
+        addColumn("kind", title: L10n.string("Kind"), width: 110, minimum: 90)
+        addColumn("size", title: L10n.string("Size"), width: 80, minimum: 75)
+        addColumn("modified", title: L10n.string("Modified"), width: 170, minimum: 150)
         outlineView.outlineTableColumn = outlineView.tableColumns.first
         updateSortAvailability()
         synchronizeSortDescriptor()
@@ -417,9 +450,163 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         column.title = title
         column.width = width
         column.minWidth = minimum
-        column.resizingMask = .autoresizingMask.union(.userResizingMask)
+        column.resizingMask = .userResizingMask
         column.sortDescriptorPrototype = NSSortDescriptor(key: identifier, ascending: true)
         outlineView.addTableColumn(column)
+    }
+
+    private func layoutColumns() {
+        guard !isAdjustingColumns, !outlineView.tableColumns.isEmpty else { return }
+        scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
+        scrollView.hasHorizontalScroller = false
+        scrollView.tile()
+        scrollView.layoutSubtreeIfNeeded()
+        let targetWidth = fittedColumnLayoutWidth
+        guard targetWidth > 0 else { return }
+
+        isAdjustingColumns = true
+        fitColumns(to: targetWidth)
+        var frame = outlineView.frame
+        frame.size.width = targetWidth
+        outlineView.frame = frame
+        isAdjustingColumns = false
+
+        if scrollView.contentView.bounds.origin.x != 0 {
+            var origin = scrollView.contentView.bounds.origin
+            origin.x = 0
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        refreshColumnResizeCursorRects()
+    }
+
+    private var fittedColumnLayoutWidth: CGFloat {
+        let insets = scrollView.contentInsets
+        let viewportWidth = floor(scrollView.bounds.width - insets.left - insets.right)
+        guard scrollView.hasVerticalScroller else { return max(0, viewportWidth) }
+        let reservedWidth = NSScroller.scrollerWidth(
+            for: .regular,
+            scrollerStyle: scrollView.scrollerStyle
+        ) + 4
+        return max(0, viewportWidth - reservedWidth)
+    }
+
+    private func fitColumns(to targetWidth: CGFloat) {
+        let difference = targetWidth - outlineView.tableColumns.reduce(0) { $0 + $1.width }
+        guard abs(difference) > 0.5 else { return }
+        if difference > 0,
+           let nameColumn = outlineView.tableColumn(
+               withIdentifier: NSUserInterfaceItemIdentifier("name")
+           ) {
+            nameColumn.width += difference
+            return
+        }
+
+        var requiredReduction = -difference
+        for identifiers in [["name"], ["kind", "size"], ["modified"]] {
+            let columns = identifiers.compactMap {
+                outlineView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier($0))
+            }
+            requiredReduction -= shrink(columns, by: requiredReduction)
+            if requiredReduction <= 0.5 { return }
+        }
+    }
+
+    private func shrink(_ columns: [NSTableColumn], by requestedReduction: CGFloat) -> CGFloat {
+        guard requestedReduction > 0.5 else { return 0 }
+        let capacities = columns.map { max(0, $0.width - $0.minWidth) }
+        let totalCapacity = capacities.reduce(0, +)
+        guard totalCapacity > 0 else { return 0 }
+        let actualReduction = min(requestedReduction, totalCapacity)
+        var remainingReduction = actualReduction
+        for (index, column) in columns.enumerated() {
+            let reduction = index == columns.count - 1
+                ? min(capacities[index], remainingReduction)
+                : min(capacities[index], actualReduction * capacities[index] / totalCapacity)
+            column.width -= reduction
+            remainingReduction -= reduction
+        }
+        return actualReduction - max(0, remainingReduction)
+    }
+
+    private func resizeFittedColumns(at dividerIndex: Int, initialWidths: [CGFloat], delta: CGFloat) {
+        let columns = outlineView.tableColumns
+        guard columns.indices.contains(dividerIndex),
+              columns.indices.contains(dividerIndex + 1),
+              initialWidths.count == columns.count else { return }
+
+        var widths = initialWidths
+        if delta >= 0 {
+            let adjustment = shrinkFittedWidths(
+                &widths,
+                columns: columns,
+                candidateIndices: Array(columns.indices.dropFirst(dividerIndex + 1)),
+                by: delta
+            )
+            widths[dividerIndex] = initialWidths[dividerIndex] + adjustment
+        } else {
+            let adjustment = shrinkFittedWidths(
+                &widths,
+                columns: columns,
+                candidateIndices: Array(columns.indices.prefix(dividerIndex + 1)),
+                by: -delta
+            )
+            widths[dividerIndex + 1] = initialWidths[dividerIndex + 1] + adjustment
+        }
+
+        for (column, width) in zip(columns, widths) {
+            column.width = width
+        }
+        outlineView.needsDisplay = true
+        outlineView.headerView?.needsDisplay = true
+        refreshColumnResizeCursorRects()
+    }
+
+    private func fittedResizeDirections(at dividerIndex: Int) -> (left: Bool, right: Bool) {
+        let columns = outlineView.tableColumns
+        guard columns.indices.contains(dividerIndex), dividerIndex + 1 < columns.count else {
+            return (false, false)
+        }
+        let canMoveLeft = columns.indices.prefix(dividerIndex + 1).contains { index in
+            columns[index].width - columns[index].minWidth > 0.5
+        }
+        let canMoveRight = columns.indices.dropFirst(dividerIndex + 1).contains { index in
+            columns[index].width - columns[index].minWidth > 0.5
+        }
+        return (canMoveLeft, canMoveRight)
+    }
+
+    private func refreshColumnResizeCursorRects() {
+        guard let headerView = outlineView.headerView, let window = headerView.window else { return }
+        window.invalidateCursorRects(for: headerView)
+    }
+
+    private func shrinkFittedWidths(
+        _ widths: inout [CGFloat],
+        columns: [NSTableColumn],
+        candidateIndices: [Int],
+        by requestedReduction: CGFloat
+    ) -> CGFloat {
+        var remainingReduction = requestedReduction
+        for identifiers in [["name"], ["kind", "size"], ["modified"]]
+        where remainingReduction > 0.5 {
+            let indices = candidateIndices.filter { identifiers.contains(columns[$0].identifier.rawValue) }
+            let capacities = indices.map { max(0, widths[$0] - columns[$0].minWidth) }
+            let totalCapacity = capacities.reduce(0, +)
+            guard totalCapacity > 0 else { continue }
+
+            let groupReduction = min(remainingReduction, totalCapacity)
+            var unallocatedReduction = groupReduction
+            for (offset, index) in indices.enumerated() {
+                let reduction = offset == indices.count - 1
+                    ? min(capacities[offset], unallocatedReduction)
+                    : min(capacities[offset], groupReduction * capacities[offset] / totalCapacity)
+                widths[index] -= reduction
+                unallocatedReduction -= reduction
+            }
+            remainingReduction -= groupReduction - max(0, unallocatedReduction)
+        }
+        return requestedReduction - max(0, remainingReduction)
     }
 
     private func updateSortAvailability() {
@@ -481,13 +668,6 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         guard newValue != groupsByType else { return }
         groupsByType = newValue
         FolderContentsPreferences.groupsByType = newValue
-        if groupsByType {
-            if activeSortMode == .kindAscending || activeSortMode == .kindDescending {
-                activeSortMode = .smart
-            }
-        } else if activeSortMode == .smart {
-            activeSortMode = .modifiedDescending
-        }
         updateSortAvailability()
         synchronizeSortDescriptor()
         rebuildContents()
@@ -564,6 +744,9 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
             groups = []
             flatNodes = sorted(results, in: nil).map(FolderContentsFileNode.init)
         }
+        if activeSortMode.isSizeSort {
+            sizeSortFolderOrder = currentFolderOrder()
+        }
         outlineView.reloadData()
         if groupsByType {
             groups.forEach { outlineView.expandItem($0) }
@@ -575,12 +758,30 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         if !selectedRows.isEmpty {
             outlineView.selectRowIndexes(selectedRows, byExtendingSelection: false)
         }
+        DispatchQueue.main.async { [weak self] in self?.layoutColumns() }
     }
 
     private func sorted(_ values: [SearchResult], in groupKind: FolderContentsGroupKind?) -> [SearchResult] {
         values.sorted { lhs, rhs in
-            if activeSortMode == .smart, let groupKind {
-                return smartOrder(lhs, rhs, in: groupKind)
+            if activeSortMode == .smart {
+                if let groupKind {
+                    return smartOrder(lhs, rhs, in: groupKind)
+                }
+                let lhsGroupKind = FolderContentsGroupKind.classify(lhs)
+                let rhsGroupKind = FolderContentsGroupKind.classify(rhs)
+                if lhsGroupKind != rhsGroupKind {
+                    return lhsGroupKind.rawValue < rhsGroupKind.rawValue
+                }
+                return smartOrder(lhs, rhs, in: lhsGroupKind)
+            }
+            if activeSortMode.isSizeSort {
+                if groupKind == .folder {
+                    return folderOrderDuringSizeSort(lhs, rhs)
+                }
+                if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+                if lhs.isDirectory && rhs.isDirectory {
+                    return folderOrderDuringSizeSort(lhs, rhs)
+                }
             }
             let comparison: ComparisonResult
             switch activeSortMode {
@@ -620,6 +821,33 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
             default:
                 return comparison == .orderedAscending
             }
+        }
+    }
+
+    private func currentFolderOrder() -> [String: Int] {
+        let folderNodes: [FolderContentsFileNode]
+        if groupsByType {
+            folderNodes = groups.first(where: { $0.kind == .folder })?.children ?? []
+        } else {
+            folderNodes = flatNodes.filter(\.result.isDirectory)
+        }
+        return Dictionary(uniqueKeysWithValues: folderNodes.enumerated().map { index, node in
+            (node.result.url.standardizedFileURL.path, index)
+        })
+    }
+
+    private func folderOrderDuringSizeSort(_ lhs: SearchResult, _ rhs: SearchResult) -> Bool {
+        let lhsRank = sizeSortFolderOrder?[lhs.url.standardizedFileURL.path]
+        let rhsRank = sizeSortFolderOrder?[rhs.url.standardizedFileURL.path]
+        switch (lhsRank, rhsRank) {
+        case let (lhsRank?, rhsRank?):
+            return lhsRank < rhsRank
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        case (nil, nil):
+            return smartOrder(lhs, rhs, in: .folder)
         }
     }
 
@@ -683,6 +911,11 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         guard !isSynchronizingSort,
               let descriptor = outlineView.sortDescriptors.first,
               let mode = FolderContentsSortMode(descriptor: descriptor) else { return }
+        if mode.isSizeSort, !activeSortMode.isSizeSort {
+            sizeSortFolderOrder = currentFolderOrder()
+        } else if !mode.isSizeSort {
+            sizeSortFolderOrder = nil
+        }
         activeSortMode = mode
         rebuildContents()
     }
@@ -751,9 +984,8 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         case "modified": cell.textField?.stringValue = result.modifiedAt.map(Self.dateFormatter.string(from:)) ?? "—"
         default: break
         }
-        cell.fullToolTipText = identifier.rawValue == "kind" && !result.fullKind.isEmpty
-            ? Self.singleLine(result.fullKind)
-            : cell.textField?.stringValue
+        cell.fullToolTipText = cell.textField?.stringValue
+        cell.updateToolTip()
         return cell
     }
 
@@ -782,8 +1014,14 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         let cell = FolderContentsCellView()
         cell.identifier = identifier
         let text = NSTextField(labelWithString: "")
-        text.lineBreakMode = .byTruncatingTail
+        text.lineBreakMode = .byTruncatingMiddle
         text.translatesAutoresizingMaskIntoConstraints = false
+        text.maximumNumberOfLines = 1
+        text.cell?.usesSingleLineMode = true
+        if identifier.rawValue == "modified" {
+            text.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            text.alignment = .right
+        }
         cell.textField = text
         cell.addSubview(text)
         if identifier.rawValue == "name" {
@@ -984,6 +1222,14 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         }
     }
 
+    func windowDidResize(_ notification: Notification) {
+        layoutColumns()
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        layoutColumns()
+    }
+
     func windowWillClose(_ notification: Notification) {
         loadGeneration += 1
         onClose?()
@@ -1017,6 +1263,10 @@ private final class FolderContentsOutlineView: NSOutlineView {
     var onGetInfo: (() -> Void)?
     var onRefresh: (() -> Void)?
     var isActionableRow: ((Int) -> Bool)?
+
+    override func frameOfOutlineCell(atRow row: Int) -> NSRect {
+        .zero
+    }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
@@ -1061,10 +1311,14 @@ private final class FolderContentsCellView: NSTableCellView {
 
     override func layout() {
         super.layout()
+        updateToolTip()
+    }
+
+    func updateToolTip() {
         guard let textField else { return }
         let completeText = fullToolTipText ?? textField.stringValue
         let isTruncated = !textField.expansionFrame(withFrame: textField.bounds).isEmpty
-        let resolvedToolTip = isTruncated || completeText != textField.stringValue ? completeText : nil
+        let resolvedToolTip = isTruncated ? completeText : nil
         toolTip = resolvedToolTip
         textField.toolTip = resolvedToolTip
     }

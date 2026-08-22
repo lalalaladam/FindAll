@@ -2258,7 +2258,7 @@ private final class ResultTableCellView: NSTableCellView {
     }
 }
 
-private final class FittedTableHeaderView: NSTableHeaderView {
+final class FittedTableHeaderView: NSTableHeaderView {
     var usesFittedResizing: (() -> Bool)?
     var resizeDirections: ((Int) -> (left: Bool, right: Bool))?
     var onResizeWillBegin: (() -> Void)?
