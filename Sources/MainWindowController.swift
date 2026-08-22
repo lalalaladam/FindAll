@@ -1,9 +1,10 @@
 import AppKit
 import QuickLookUI
 
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTextViewDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
     private let searchField = NSSearchField()
-    private let searchFieldEditor = PathFieldEditor()
+    private let pathInputScrollView = NSScrollView()
+    private let pathInputTextView = PathInputTextView()
     private let matchModeControl = NSSegmentedControl(
         labels: SearchMatchMode.allCases.map(\.title),
         trackingMode: .selectOne,
@@ -25,9 +26,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var candidates: [SearchResult] = []
     private var results: [SearchResult] = []
     private var lastSearchRequest: SearchRequest?
-    private var pendingPathInputs: [String]?
-    private var isApplyingPathPaste = false
     private var isChangingMatchMode = false
+    private var filterBarSearchTopConstraint: NSLayoutConstraint?
+    private var filterBarPathTopConstraint: NSLayoutConstraint?
+    private var matchModeSearchCenterConstraint: NSLayoutConstraint?
+    private var matchModePathCenterConstraint: NSLayoutConstraint?
+    private var matchModeSearchTrailingConstraint: NSLayoutConstraint?
+    private var matchModePathTrailingConstraint: NSLayoutConstraint?
+    private var pathIgnoredFilterViews: [NSView] = []
     private var preferencesObserver: NSObjectProtocol?
     private var windowPreferencesObserver: NSObjectProtocol?
     private var resetColumnLayoutObserver: NSObjectProtocol?
@@ -162,7 +168,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             showWindow(nil)
             window?.makeKeyAndOrderFront(nil)
         }
-        window?.makeFirstResponder(searchField)
+        focusActiveSearchInput()
         showFullDiskAccessNoticeIfNeeded()
     }
 
@@ -171,14 +177,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     var shouldHideForGlobalToggle: Bool {
         guard let window, window.isVisible else { return false }
         return windowUsesAllSpacesPresentation ? window.isKeyWindow : NSApp.isActive
-    }
-
-    func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
-        guard let control = client as? NSSearchField, control === searchField else { return nil }
-        searchFieldEditor.isFieldEditor = true
-        searchFieldEditor.isRichText = false
-        searchFieldEditor.allowsUndo = true
-        return searchFieldEditor
     }
 
     private func buildInterface() {
@@ -190,9 +188,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         searchField.target = self
         searchField.action = #selector(executeSearch(_:))
         searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchFieldEditor.onPaste = { [weak self] pasteboard in
-            self?.handlePathPaste(from: pasteboard) ?? false
-        }
+
+        configurePathInput()
 
         matchModeControl.controlSize = .regular
         matchModeControl.segmentStyle = .rounded
@@ -233,7 +230,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         filterBar.orientation = .horizontal
         filterBar.alignment = .centerY
         filterBar.spacing = 7
+        filterBar.detachesHiddenViews = true
         filterBar.translatesAutoresizingMaskIntoConstraints = false
+        pathIgnoredFilterViews = [scopeLabel, scopePopup, categoryLabel, categoryPopup, prioritizeFoldersButton, foldersFirstButton]
 
         let statusSpacer = WindowDragView()
         statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -255,7 +254,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         statusSeparator.boxType = .separator
         statusSeparator.translatesAutoresizingMaskIntoConstraints = false
 
-        [searchField, matchModeControl, filterBar, scrollView, statusSeparator, statusBar].forEach(content.addSubview)
+        [searchField, pathInputScrollView, filterBar, matchModeControl, scrollView, statusSeparator, statusBar].forEach(content.addSubview)
+
+        let filterBarSearchTopConstraint = filterBar.topAnchor.constraint(
+            equalTo: searchField.bottomAnchor,
+            constant: 5
+        )
+        let filterBarPathTopConstraint = filterBar.topAnchor.constraint(
+            equalTo: pathInputScrollView.bottomAnchor,
+            constant: 5
+        )
+        self.filterBarSearchTopConstraint = filterBarSearchTopConstraint
+        self.filterBarPathTopConstraint = filterBarPathTopConstraint
+        filterBarPathTopConstraint.isActive = false
+
+        let matchModeSearchCenterConstraint = matchModeControl.centerYAnchor.constraint(equalTo: searchField.centerYAnchor)
+        let matchModePathCenterConstraint = matchModeControl.centerYAnchor.constraint(equalTo: filterBar.centerYAnchor)
+        let matchModeSearchTrailingConstraint = matchModeControl.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12)
+        let matchModePathTrailingConstraint = matchModeControl.trailingAnchor.constraint(equalTo: settingsButton.leadingAnchor, constant: -8)
+        self.matchModeSearchCenterConstraint = matchModeSearchCenterConstraint
+        self.matchModePathCenterConstraint = matchModePathCenterConstraint
+        self.matchModeSearchTrailingConstraint = matchModeSearchTrailingConstraint
+        self.matchModePathTrailingConstraint = matchModePathTrailingConstraint
+        matchModePathCenterConstraint.isActive = false
+        matchModePathTrailingConstraint.isActive = false
 
         NSLayoutConstraint.activate([
             searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: 7),
@@ -263,12 +285,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             searchField.trailingAnchor.constraint(equalTo: matchModeControl.leadingAnchor, constant: -8),
             searchField.heightAnchor.constraint(equalToConstant: 32),
 
-            matchModeControl.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
-            matchModeControl.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            pathInputScrollView.topAnchor.constraint(equalTo: content.topAnchor, constant: 7),
+            pathInputScrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            pathInputScrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            pathInputScrollView.heightAnchor.constraint(equalToConstant: 76),
+
+            matchModeSearchCenterConstraint,
+            matchModeSearchTrailingConstraint,
             matchModeControl.widthAnchor.constraint(equalToConstant: 280),
             matchModeControl.heightAnchor.constraint(equalToConstant: 28),
 
-            filterBar.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 5),
+            filterBarSearchTopConstraint,
             filterBar.leadingAnchor.constraint(equalTo: searchField.leadingAnchor),
             filterBar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             filterBar.heightAnchor.constraint(equalToConstant: 27),
@@ -294,6 +321,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         refreshFilterControls()
         content.layoutSubtreeIfNeeded()
+        let pathContentSize = pathInputScrollView.contentSize
+        pathInputTextView.minSize = NSSize(width: 0, height: pathContentSize.height)
+        pathInputTextView.frame = NSRect(origin: .zero, size: pathContentSize)
         scrollView.layoutSubtreeIfNeeded()
         layoutColumns(initialLayout: true)
     }
@@ -346,6 +376,46 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         settingsButton.toolTip = L10n.string("Settings")
         settingsButton.target = self
         settingsButton.action = #selector(openSettings(_:))
+    }
+
+    private func configurePathInput() {
+        pathInputScrollView.translatesAutoresizingMaskIntoConstraints = false
+        pathInputScrollView.borderType = .bezelBorder
+        pathInputScrollView.hasVerticalScroller = true
+        pathInputScrollView.hasHorizontalScroller = false
+        pathInputScrollView.autohidesScrollers = true
+        pathInputScrollView.drawsBackground = true
+        pathInputScrollView.backgroundColor = .textBackgroundColor
+        pathInputScrollView.toolTip = L10n.string("Press Command-Return to resolve paths")
+
+        pathInputTextView.delegate = self
+        pathInputTextView.font = .systemFont(ofSize: NSFont.systemFontSize)
+        pathInputTextView.textColor = .textColor
+        pathInputTextView.backgroundColor = .textBackgroundColor
+        pathInputTextView.drawsBackground = true
+        pathInputTextView.isRichText = false
+        pathInputTextView.importsGraphics = false
+        pathInputTextView.allowsUndo = true
+        pathInputTextView.isVerticallyResizable = true
+        pathInputTextView.isHorizontallyResizable = false
+        pathInputTextView.autoresizingMask = [.width]
+        pathInputTextView.minSize = NSSize(width: 0, height: 0)
+        pathInputTextView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        pathInputTextView.textContainerInset = NSSize(width: 5, height: 5)
+        pathInputTextView.textContainer?.widthTracksTextView = true
+        pathInputTextView.textContainer?.lineBreakMode = .byCharWrapping
+        pathInputTextView.isAutomaticQuoteSubstitutionEnabled = false
+        pathInputTextView.isAutomaticDashSubstitutionEnabled = false
+        pathInputTextView.isAutomaticTextReplacementEnabled = false
+        pathInputTextView.isContinuousSpellCheckingEnabled = false
+        pathInputTextView.isGrammarCheckingEnabled = false
+        pathInputTextView.placeholderString = L10n.string("Paste one or more file or folder paths")
+        pathInputTextView.setAccessibilityLabel(L10n.string("Path input"))
+        pathInputTextView.onCommit = { [weak self] in self?.performSearch() }
+        pathInputScrollView.documentView = pathInputTextView
     }
 
     private func rebuildCategoryMenu() {
@@ -456,13 +526,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     private func updateControlsForSearchMode() {
         let isPathMode = SearchPreferences.matchMode == .path
-        scopePopup.isEnabled = !isPathMode
-        categoryPopup.isEnabled = !isPathMode
-        prioritizeFoldersButton.isEnabled = !isPathMode
-        foldersFirstButton.isEnabled = !isPathMode
-        searchField.placeholderString = isPathMode
-            ? L10n.string("Paste one or more file or folder paths")
-            : L10n.string("Search files, folders, and applications")
+        pathIgnoredFilterViews.forEach { $0.isHidden = isPathMode }
+        searchField.isHidden = isPathMode
+        pathInputScrollView.isHidden = !isPathMode
+        filterBarSearchTopConstraint?.isActive = !isPathMode
+        filterBarPathTopConstraint?.isActive = isPathMode
+        matchModeSearchCenterConstraint?.isActive = !isPathMode
+        matchModeSearchTrailingConstraint?.isActive = !isPathMode
+        matchModePathCenterConstraint?.isActive = isPathMode
+        matchModePathTrailingConstraint?.isActive = isPathMode
+        searchField.placeholderString = L10n.string("Search files, folders, and applications")
+        window?.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    private func focusActiveSearchInput() {
+        if SearchPreferences.matchMode == .path {
+            window?.makeFirstResponder(pathInputTextView)
+        } else {
+            window?.makeFirstResponder(searchField)
+        }
     }
 
     private func scopeTitle(for path: String, among paths: [String]) -> String {
@@ -1173,12 +1255,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private func currentRequest() -> SearchRequest {
         let matchMode = SearchPreferences.matchMode
         return SearchRequest(
-            text: searchField.stringValue,
+            text: currentSearchText,
             category: matchMode == .path ? .all : SearchPreferences.category,
             scopePath: matchMode == .path ? nil : SearchPreferences.scopePath,
             matchMode: matchMode,
-            pathInputs: matchMode == .path ? pendingPathInputs : nil
+            pathInputs: nil
         )
+    }
+
+    private var currentSearchText: String {
+        SearchPreferences.matchMode == .path ? pathInputTextView.string : searchField.stringValue
     }
 
     private func performSearch() {
@@ -1306,10 +1392,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        if !isApplyingPathPaste {
-            pendingPathInputs = nil
-            searchField.toolTip = nil
-        }
+        searchInputDidChange()
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard notification.object as? NSTextView === pathInputTextView else { return }
+        searchInputDidChange()
+        pathInputTextView.needsDisplay = true
+    }
+
+    private func searchInputDidChange() {
         searchService.cancel()
         lastSearchRequest = nil
         updateIdleStatus()
@@ -1323,62 +1415,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         guard mode != SearchPreferences.matchMode else { return }
         searchService.cancel()
         lastSearchRequest = nil
-        if mode != .path {
-            pendingPathInputs = nil
-            searchField.toolTip = nil
-        }
         isChangingMatchMode = true
         SearchPreferences.matchMode = mode
         isChangingMatchMode = false
         updateControlsForSearchMode()
         updateIdleStatus()
-    }
-
-    private func handlePathPaste(from pasteboard: NSPasteboard) -> Bool {
-        guard SearchPreferences.matchMode == .path else { return false }
-
-        let inputs: [String]
-        let urlOptions: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        if let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: urlOptions) as? [NSURL],
-           !objects.isEmpty {
-            inputs = objects.map { ($0 as URL).path }
-        } else if let text = pasteboard.string(forType: .string) {
-            inputs = PathInputParser.parse(text)
-        } else {
-            return false
-        }
-        guard let firstInput = inputs.first else { return false }
-
-        pendingPathInputs = inputs
-        isApplyingPathPaste = true
-        searchField.stringValue = firstInput
-        searchFieldEditor.string = firstInput
-        searchFieldEditor.setSelectedRange(NSRange(location: (firstInput as NSString).length, length: 0))
-        isApplyingPathPaste = false
-        searchField.toolTip = inputs.count > 1 ? inputs.prefix(20).joined(separator: "\n") : nil
-
-        searchService.cancel()
-        lastSearchRequest = nil
-        statusLabel.stringValue = inputs.count > 1
-            ? String.localizedStringWithFormat(L10n.string("%lld paths ready; press Return"), Int64(inputs.count))
-            : L10n.string("Press Return to resolve paths")
-        statusLabel.toolTip = nil
-        return true
+        focusActiveSearchInput()
     }
 
     private func updateIdleStatus() {
         statusLabel.toolTip = nil
-        let hasText = !searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let text = currentSearchText
+        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if SearchPreferences.matchMode == .path {
-            if let pendingPathInputs, pendingPathInputs.count > 1 {
+            let pathCount = PathInputParser.parse(text).count
+            if pathCount > 1 {
                 statusLabel.stringValue = String.localizedStringWithFormat(
-                    L10n.string("%lld paths ready; press Return"),
-                    Int64(pendingPathInputs.count)
+                    L10n.string("%lld paths ready; press Command-Return"),
+                    Int64(pathCount)
                 )
             } else {
                 statusLabel.stringValue = hasText
-                    ? L10n.string("Press Return to resolve paths")
-                    : L10n.string("Paste paths and press Return")
+                    ? L10n.string("Press Command-Return to resolve paths")
+                    : L10n.string("Paste paths and press Command-Return")
             }
         } else {
             statusLabel.stringValue = hasText
@@ -1988,11 +2047,50 @@ private final class WindowDragStackView: NSStackView {
     }
 }
 
-private final class PathFieldEditor: NSTextView {
-    var onPaste: ((NSPasteboard) -> Bool)?
+private final class PathInputTextView: NSTextView {
+    var placeholderString = "" {
+        didSet { needsDisplay = true }
+    }
+    var onCommit: (() -> Void)?
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, !placeholderString.isEmpty else { return }
+        let origin = textContainerOrigin
+        let lineFragmentPadding = textContainer?.lineFragmentPadding ?? 0
+        let rect = NSRect(
+            x: origin.x + lineFragmentPadding,
+            y: origin.y,
+            width: max(0, bounds.width - origin.x - lineFragmentPadding - textContainerInset.width),
+            height: max(0, bounds.height - origin.y)
+        )
+        (placeholderString as NSString).draw(
+            in: rect,
+            withAttributes: [
+                .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                .foregroundColor: NSColor.placeholderTextColor
+            ]
+        )
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let characters = event.charactersIgnoringModifiers
+        let isReturn = characters == "\r" || characters == "\n" || characters == "\u{3}"
+        if isReturn, event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
+            onCommit?()
+            return
+        }
+        super.keyDown(with: event)
+    }
 
     override func paste(_ sender: Any?) {
-        if onPaste?(NSPasteboard.general) == true { return }
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        if let objects = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: options) as? [NSURL],
+           !objects.isEmpty {
+            let paths = objects.map { ($0 as URL).path }.joined(separator: "\n")
+            insertText(paths, replacementRange: selectedRange())
+            return
+        }
         super.paste(sender)
     }
 }

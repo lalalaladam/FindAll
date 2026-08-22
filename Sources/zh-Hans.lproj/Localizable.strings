@@ -121,12 +121,13 @@
 "Path (A–Z)" = "路径（A–Z）";
 "Path (Z–A)" = "路径（Z–A）";
 "Path" = "路径";
+"Path input" = "路径输入";
 "Pinned" = "置顶";
 "Pinned folders rank above Preferred and Normal folders. Within one priority, folders higher in this list rank first." = "置顶目录排在优先和普通目录之前；同一优先级内，列表中位置越靠上的目录排序越靠前。";
 "Preferred" = "优先";
 "Press Return to search" = "按 Return 开始搜索";
-"Press Return to resolve paths" = "按 Return 检索路径";
-"Paste paths and press Return" = "粘贴路径并按 Return";
+"Press Command-Return to resolve paths" = "按 Command + Return 检索路径";
+"Paste paths and press Command-Return" = "粘贴路径并按 Command + Return";
 "Priority" = "优先级";
 "Prioritize folder rules" = "优先目录置前";
 "Quick Look" = "快速查看";
@@ -178,7 +179,7 @@
 "Spotlight search timed out." = "Spotlight 搜索已超时。";
 "Starting Spotlight search…" = "正在启动 Spotlight 搜索…";
 "Resolving %lld paths…" = "正在检索 %lld 个路径…";
-"%lld paths ready; press Return" = "已准备 %lld 个路径；按 Return 检索";
+"%lld paths ready; press Command-Return" = "已准备 %lld 个路径；按 Command + Return 检索";
 "%lld path results" = "找到 %lld 个路径";
 "No paths could be resolved" = "未找到可访问的路径";
 "%lld not found" = "%lld 个不存在";
