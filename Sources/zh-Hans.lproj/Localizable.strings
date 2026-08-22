@@ -1,5 +1,6 @@
 "%@ → press new shortcut" = "%@ → 请按新快捷键";
 "%lld results" = "%lld 个结果";
+"%lld selected" = "已选择 %lld 项";
 "A native, keyboard-friendly file search interface for macOS." = "原生、键盘友好的 macOS 文件搜索工具。";
 "About FindAll" = "关于 FindAll";
 "Add" = "添加";

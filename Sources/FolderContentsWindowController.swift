@@ -242,6 +242,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         action: nil
     )
     private let statusLabel = NSTextField(labelWithString: "")
+    private let selectionStatusLabel = NSTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
     private let refreshButton = NSButton()
     private let loadQueue = DispatchQueue(label: "com.lalalaladam.FindAll.folder-contents", qos: .userInitiated)
@@ -360,10 +361,16 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         statusLabel.font = .systemFont(ofSize: 12)
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        selectionStatusLabel.textColor = .secondaryLabelColor
+        selectionStatusLabel.font = .systemFont(ofSize: 12)
+        selectionStatusLabel.isHidden = true
+        selectionStatusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        selectionStatusLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        let statusBar = NSStackView(views: [spinner, statusLabel])
+        let statusBar = NSStackView(views: [spinner, statusLabel, selectionStatusLabel])
         statusBar.orientation = .horizontal
         statusBar.alignment = .centerY
+        statusBar.detachesHiddenViews = true
         statusBar.spacing = 8
         statusBar.translatesAutoresizingMaskIntoConstraints = false
 
@@ -405,7 +412,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         outlineView.columnAutoresizingStyle = .noColumnAutoresizing
         outlineView.autoresizingMask = [.height]
         outlineView.target = self
-        outlineView.doubleAction = #selector(openSelection(_:))
+        outlineView.doubleAction = #selector(openDoubleClickedRow(_:))
         outlineView.onOpen = { [weak self] in self?.openSelection(nil) }
         outlineView.onShowFolderContents = { [weak self] in self?.showFolderContents(nil) }
         outlineView.onQuickLook = { [weak self] in self?.toggleQuickLook(nil) }
@@ -758,6 +765,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         if !selectedRows.isEmpty {
             outlineView.selectRowIndexes(selectedRows, byExtendingSelection: false)
         }
+        updateSelectionStatus()
         DispatchQueue.main.async { [weak self] in self?.layoutColumns() }
     }
 
@@ -990,7 +998,17 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        updateSelectionStatus()
         QLPreviewPanel.shared()?.reloadData()
+    }
+
+    private func updateSelectionStatus() {
+        let selectionCount = selectedNodes.count
+        selectionStatusLabel.isHidden = selectionCount == 0
+        selectionStatusLabel.stringValue = String.localizedStringWithFormat(
+            L10n.string("%lld selected"),
+            Int64(selectionCount)
+        )
     }
 
     private func makeGroupCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
@@ -1066,6 +1084,11 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
     @objc private func showFolderContents(_ sender: Any?) {
         guard let selectedFolderURL else { return }
         onShowFolderContents?(selectedFolderURL, window)
+    }
+
+    @objc private func openDoubleClickedRow(_ sender: NSOutlineView) {
+        guard sender === outlineView, fileNode(atRow: sender.clickedRow) != nil else { return }
+        openSelection(sender)
     }
 
     @objc private func openSelection(_ sender: Any?) {

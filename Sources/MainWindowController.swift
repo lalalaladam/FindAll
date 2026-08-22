@@ -21,6 +21,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private let scrollView = NSScrollView()
     private let tableView = ActionTableView()
     private let statusLabel = WindowDragTextField(labelWithString: L10n.string("Type a query and press Return"))
+    private let selectionStatusLabel = WindowDragTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
     private let keepOnTopSwitch = NSSwitch()
     private let allSpacesSwitch = NSSwitch()
@@ -214,6 +215,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.font = .systemFont(ofSize: 12)
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        selectionStatusLabel.textColor = .secondaryLabelColor
+        selectionStatusLabel.font = .systemFont(ofSize: 12)
+        selectionStatusLabel.isHidden = true
+        selectionStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
@@ -240,6 +245,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let statusSpacer = WindowDragView()
         statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        selectionStatusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        selectionStatusLabel.setContentHuggingPriority(.required, for: .horizontal)
         let keepOnTopControl = labeledSwitch(
             title: L10n.string("Keep on top in current Space"),
             control: keepOnTopSwitch
@@ -248,9 +255,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             title: L10n.string("Show on all Spaces"),
             control: allSpacesSwitch
         )
-        let statusBar = WindowDragStackView(views: [spinner, statusLabel, statusSpacer, keepOnTopControl, allSpacesControl])
+        let statusBar = WindowDragStackView(views: [spinner, statusLabel, selectionStatusLabel, statusSpacer, keepOnTopControl, allSpacesControl])
         statusBar.orientation = .horizontal
         statusBar.alignment = .centerY
+        statusBar.detachesHiddenViews = true
         statusBar.spacing = 8
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         let statusSeparator = NSBox()
@@ -589,7 +597,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         tableView.autoresizingMask = [.height]
         tableView.delegate = self
         tableView.dataSource = self
-        tableView.doubleAction = #selector(openSelection(_:))
+        tableView.doubleAction = #selector(openDoubleClickedRow(_:))
         tableView.target = self
         tableView.onQuickLook = { [weak self] in self?.toggleQuickLook(nil) }
         tableView.onOpen = { [weak self] in self?.openSelection(nil) }
@@ -1405,6 +1413,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         }
         scrollView.contentView.scroll(to: scrollOrigin)
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        updateSelectionStatus()
         DispatchQueue.main.async { [weak self] in self?.layoutColumns() }
     }
 
@@ -1604,6 +1613,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     func numberOfRows(in tableView: NSTableView) -> Int { results.count }
 
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateSelectionStatus()
+    }
+
+    private func updateSelectionStatus() {
+        let selectionCount = selectedURLs.count
+        selectionStatusLabel.isHidden = selectionCount == 0
+        selectionStatusLabel.stringValue = String.localizedStringWithFormat(
+            L10n.string("%lld selected"),
+            Int64(selectionCount)
+        )
+    }
+
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
         guard results.indices.contains(row) else { return nil }
         return results[row].url as NSURL
@@ -1678,6 +1700,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     private var selectedURLs: [URL] {
         tableView.selectedRowIndexes.compactMap { $0 < results.count ? results[$0].url : nil }
+    }
+
+    @objc private func openDoubleClickedRow(_ sender: NSTableView) {
+        guard sender === tableView, results.indices.contains(sender.clickedRow) else { return }
+        openSelection(sender)
     }
 
     @objc func openSelection(_ sender: Any?) {
