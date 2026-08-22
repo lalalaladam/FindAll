@@ -500,7 +500,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         startupSizeRow.orientation = .horizontal
         startupSizeRow.alignment = .centerY
         startupSizeRow.spacing = 12
-        let sizingRow = NSStackView(views: [sizingLabel, columnSizingPopup])
+        let sizingRow = NSStackView(views: [sizingLabel, columnSizingPopup, resetLayout])
         sizingRow.orientation = .horizontal
         sizingRow.alignment = .centerY
         sizingRow.spacing = 12
@@ -523,7 +523,6 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             layoutHeading,
             layoutHelp,
             sizingRow,
-            resetLayout,
             fileManagerHeading,
             fileManagerHelp,
             fileManagerRow
@@ -534,7 +533,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         stack.setCustomSpacing(18, after: languageRow)
         stack.setCustomSpacing(18, after: startupOptions)
         stack.setCustomSpacing(18, after: settingsAllSpacesButton)
-        stack.setCustomSpacing(18, after: resetLayout)
+        stack.setCustomSpacing(18, after: sizingRow)
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
         NSLayoutConstraint.activate([
