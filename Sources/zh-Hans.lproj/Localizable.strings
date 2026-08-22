@@ -84,6 +84,11 @@
 "Images" = "图片";
 "Language" = "语言";
 "Application language:" = "应用语言：";
+"Startup & Presence" = "启动与显示";
+"Launch FindAll at login" = "登录时启动 FindAll";
+"Enable FindAll in System Settings > General > Login Items." = "请在“系统设置”>“通用”>“登录项”中启用 FindAll。";
+"Could Not Change Login Item" = "无法更改登录项";
+"FindAll could not update its login item. You can manage it in System Settings > General > Login Items." = "FindAll 无法更新登录项。你可以在“系统设置”>“通用”>“登录项”中进行管理。";
 "Keep folders above files within the same priority" = "同一优先级内文件夹置顶";
 "Keep on top in current Space" = "窗口置顶";
 "Keep manually adjusted widths" = "保留手动调整的列宽";

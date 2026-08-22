@@ -10,19 +10,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyHandlerRef: EventHandlerRef?
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard showsDockIconAtLaunch else { return }
+        _ = NSApp.setActivationPolicy(.regular)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let relaunchDockIconValue = ProcessInfo.processInfo.environment[Self.relaunchDockIconEnvironmentKey]
-        let showsDockIcon: Bool
-        switch relaunchDockIconValue {
-        case "1": showsDockIcon = true
-        case "0": showsDockIcon = false
-        default: showsDockIcon = WindowPreferences.showDockIcon
+        // LSUIElement makes every process start as an agent. A visible Dock icon is
+        // implemented only by promoting that fresh process; hiding never depends on
+        // demoting an already-regular application.
+        if showsDockIconAtLaunch, NSApp.activationPolicy() != .regular {
+            _ = NSApp.setActivationPolicy(.regular)
         }
-        NSApp.setActivationPolicy(showsDockIcon ? .regular : .accessory)
         mainWindowController = MainWindowController()
         configureMainMenu()
         refreshShortcutConfiguration()
-        showMainWindow(nil)
+        if !wasLaunchedAsLoginItem {
+            showMainWindow(nil)
+        }
+    }
+
+    private var showsDockIconAtLaunch: Bool {
+        switch ProcessInfo.processInfo.environment[Self.relaunchDockIconEnvironmentKey] {
+        case "1": return true
+        case "0": return false
+        default: return WindowPreferences.showDockIcon
+        }
+    }
+
+    private var wasLaunchedAsLoginItem: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent else { return false }
+        return event.eventID == kAEOpenApplication
+            && event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

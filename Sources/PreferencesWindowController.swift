@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import UniformTypeIdentifiers
 
 enum CommandID: String, CaseIterable {
@@ -273,6 +274,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private let columnSizingPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let settingsKeepOnTopButton = NSButton(checkboxWithTitle: L10n.string("Keep on top in current Space"), target: nil, action: nil)
     private let settingsAllSpacesButton = NSButton(checkboxWithTitle: L10n.string("Show on all Spaces"), target: nil, action: nil)
+    private let settingsLaunchAtLoginButton = NSButton(checkboxWithTitle: L10n.string("Launch FindAll at login"), target: nil, action: nil)
     private let settingsShowDockIconButton = NSButton(checkboxWithTitle: L10n.string("Show FindAll in the Dock"), target: nil, action: nil)
     private let fileManagerPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let languagePopup = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -306,6 +308,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         ) { [weak self] _ in
             guard self?.window?.isVisible == true else { return }
             self?.refreshFullDiskAccessStatus()
+            self?.refreshLaunchAtLoginStatus()
         }
     }
 
@@ -441,6 +444,17 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         languageRow.alignment = .centerY
         languageRow.spacing = 12
 
+        let startupHeading = NSTextField(labelWithString: L10n.string("Startup & Presence"))
+        startupHeading.font = .boldSystemFont(ofSize: 17)
+        settingsLaunchAtLoginButton.target = self
+        settingsLaunchAtLoginButton.action = #selector(launchAtLoginChanged(_:))
+        settingsShowDockIconButton.target = self
+        settingsShowDockIconButton.action = #selector(showDockIconChanged(_:))
+        let startupOptions = NSStackView(views: [settingsLaunchAtLoginButton, settingsShowDockIconButton])
+        startupOptions.orientation = .horizontal
+        startupOptions.alignment = .centerY
+        startupOptions.spacing = 28
+
         let windowHeading = NSTextField(labelWithString: L10n.string("Window Presentation"))
         windowHeading.font = .boldSystemFont(ofSize: 17)
         let placementLabel = NSTextField(labelWithString: L10n.string("When showing FindAll:"))
@@ -462,8 +476,6 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         settingsKeepOnTopButton.action = #selector(settingsWindowBehaviorChanged(_:))
         settingsAllSpacesButton.target = self
         settingsAllSpacesButton.action = #selector(settingsWindowBehaviorChanged(_:))
-        settingsShowDockIconButton.target = self
-        settingsShowDockIconButton.action = #selector(showDockIconChanged(_:))
 
         let layoutHeading = NSTextField(labelWithString: L10n.string("Result List Layout"))
         layoutHeading.font = .boldSystemFont(ofSize: 17)
@@ -500,13 +512,14 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         let stack = NSStackView(views: [
             languageHeading,
             languageRow,
+            startupHeading,
+            startupOptions,
             windowHeading,
             placementRow,
             startupSizeRow,
             resetWindowSize,
             settingsKeepOnTopButton,
             settingsAllSpacesButton,
-            settingsShowDockIconButton,
             layoutHeading,
             layoutHelp,
             sizingRow,
@@ -519,7 +532,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         stack.alignment = .leading
         stack.spacing = 10
         stack.setCustomSpacing(18, after: languageRow)
-        stack.setCustomSpacing(18, after: settingsShowDockIconButton)
+        stack.setCustomSpacing(18, after: startupOptions)
+        stack.setCustomSpacing(18, after: settingsAllSpacesButton)
         stack.setCustomSpacing(18, after: resetLayout)
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
@@ -686,6 +700,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func refreshWindowSettings() {
         rebuildLanguageMenu()
+        refreshLaunchAtLoginStatus()
         let placement = WindowPreferences.placement
         centerPlacementButton.state = placement == .center ? .on : .off
         rememberPlacementButton.state = placement == .remember ? .on : .off
@@ -696,6 +711,23 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         settingsShowDockIconButton.state = WindowPreferences.showDockIcon ? .on : .off
 
         rebuildFileManagerMenu()
+    }
+
+    private func refreshLaunchAtLoginStatus() {
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            settingsLaunchAtLoginButton.state = .on
+            settingsLaunchAtLoginButton.toolTip = nil
+        case .requiresApproval:
+            settingsLaunchAtLoginButton.state = .off
+            settingsLaunchAtLoginButton.toolTip = L10n.string("Enable FindAll in System Settings > General > Login Items.")
+        case .notRegistered, .notFound:
+            settingsLaunchAtLoginButton.state = .off
+            settingsLaunchAtLoginButton.toolTip = nil
+        @unknown default:
+            settingsLaunchAtLoginButton.state = .off
+            settingsLaunchAtLoginButton.toolTip = nil
+        }
     }
 
     private func rebuildLanguageMenu() {
@@ -919,6 +951,32 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         } else if sender === settingsAllSpacesButton {
             WindowPreferences.showOnAllSpaces = sender.state == .on
         }
+    }
+
+    @objc private func launchAtLoginChanged(_ sender: NSButton) {
+        let service = SMAppService.mainApp
+        let shouldLaunchAtLogin = sender.state == .on
+        do {
+            if shouldLaunchAtLogin {
+                if service.status == .requiresApproval {
+                    SMAppService.openSystemSettingsLoginItems()
+                } else if service.status != .enabled {
+                    try service.register()
+                }
+            } else if service.status == .enabled || service.status == .requiresApproval {
+                try service.unregister()
+            }
+        } catch {
+            guard let window else {
+                refreshLaunchAtLoginStatus()
+                return
+            }
+            let alert = NSAlert(error: error)
+            alert.messageText = L10n.string("Could Not Change Login Item")
+            alert.informativeText = L10n.string("FindAll could not update its login item. You can manage it in System Settings > General > Login Items.")
+            alert.beginSheetModal(for: window)
+        }
+        refreshLaunchAtLoginStatus()
     }
 
     @objc private func showDockIconChanged(_ sender: NSButton) {
