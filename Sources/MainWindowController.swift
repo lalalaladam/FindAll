@@ -187,6 +187,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         searchField.sendsWholeSearchString = true
         searchField.target = self
         searchField.action = #selector(executeSearch(_:))
+        searchField.cell?.isScrollable = true
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
         configurePathInput()
@@ -1395,6 +1396,71 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         searchInputDidChange()
     }
 
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+        if commandSelector == #selector(NSResponder.moveDown(_:)), !results.isEmpty {
+            if tableView.selectedRow < 0 {
+                tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            }
+            window?.makeFirstResponder(tableView)
+            return true
+        }
+
+        guard control === searchField,
+              let clipView = textView.superview as? NSClipView else { return false }
+
+        let previousOrigin = clipView.bounds.origin
+        switch commandSelector {
+        case #selector(NSResponder.moveLeft(_:)):
+            textView.moveLeft(nil)
+        case #selector(NSResponder.moveRight(_:)):
+            textView.moveRight(nil)
+        default:
+            return false
+        }
+        scrollSearchFieldEditorMinimally(
+            textView,
+            in: clipView,
+            from: previousOrigin
+        )
+        return true
+    }
+
+    private func scrollSearchFieldEditorMinimally(
+        _ textView: NSTextView,
+        in clipView: NSClipView,
+        from previousOrigin: NSPoint
+    ) {
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else { return }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let selectionLocation = textView.selectedRange().location
+        guard selectionLocation != NSNotFound else { return }
+        let glyphRange = layoutManager.glyphRange(
+            forCharacterRange: NSRange(location: selectionLocation, length: 0),
+            actualCharacterRange: nil
+        )
+        var caretRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        caretRect.origin.x += textView.textContainerOrigin.x - textView.bounds.minX + textView.frame.minX
+
+        let caretMargin: CGFloat = 4
+        var targetX = previousOrigin.x
+        if caretRect.maxX > previousOrigin.x + clipView.bounds.width - caretMargin {
+            targetX = caretRect.maxX - clipView.bounds.width + caretMargin
+        } else if caretRect.minX < previousOrigin.x + caretMargin {
+            targetX = caretRect.minX - caretMargin
+        }
+
+        let minimumX = textView.frame.minX
+        let maximumX = max(minimumX, textView.frame.maxX - clipView.bounds.width)
+        targetX = min(max(targetX, minimumX), maximumX)
+        clipView.scroll(to: NSPoint(x: targetX, y: previousOrigin.y))
+    }
+
     func textDidChange(_ notification: Notification) {
         guard notification.object as? NSTextView === pathInputTextView else { return }
         searchInputDidChange()
@@ -1518,15 +1584,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     @objc private func openSettings(_ sender: Any?) {
         NSApp.sendAction(#selector(AppDelegate.showPreferences(_:)), to: NSApp.delegate, from: sender)
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard !results.isEmpty, commandSelector == #selector(NSResponder.moveDown(_:)) else { return false }
-        if tableView.selectedRow < 0 {
-            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        }
-        window?.makeFirstResponder(tableView)
-        return true
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { results.count }
