@@ -165,6 +165,7 @@
 "Shortcut updated." = "快捷键已更新。";
 "Show All" = "全部显示";
 "Show FindAll" = "显示 FindAll";
+"Show FindAll in the Dock" = "在 Dock 中显示 FindAll";
 "Show or hide FindAll" = "显示或隐藏 FindAll";
 "Show on all Spaces" = "在所有桌面显示";
 "System Default" = "系统默认";
@@ -207,6 +208,9 @@
 "Change Language?" = "切换语言？";
 "FindAll needs to restart to use %@." = "FindAll 需要重新启动以使用%@。";
 "The language change will apply the next time you open FindAll." = "语言更改将在下次打开 FindAll 时生效。";
+"Change Dock Icon Visibility?" = "更改 Dock 图标显示状态？";
+"FindAll needs to restart to change its Dock icon visibility. When hidden, use the global keyboard shortcut to show FindAll." = "FindAll 需要重新启动以更改 Dock 图标的显示状态。隐藏后，请使用全局键盘快捷键显示 FindAll。";
+"The Dock icon change will apply the next time you open FindAll." = "Dock 图标更改将在下次打开 FindAll 时生效。";
 "Type a query and press Return" = "输入关键词并按 Return";
 "Type a query to search" = "输入关键词并按 Return 搜索";
 "Type:" = "类型：";

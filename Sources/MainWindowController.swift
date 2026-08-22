@@ -1577,6 +1577,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         text.maximumNumberOfLines = 1
         text.cell?.usesSingleLineMode = true
         text.lineBreakMode = .byTruncatingMiddle
+        if identifier.rawValue == "modified" {
+            text.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        }
         cell.addSubview(text)
         cell.textField = text
         if identifier.rawValue == "name" {
@@ -1760,8 +1763,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
         return formatter
     }()
 

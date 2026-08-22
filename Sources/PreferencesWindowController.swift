@@ -273,6 +273,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     private let columnSizingPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let settingsKeepOnTopButton = NSButton(checkboxWithTitle: L10n.string("Keep on top in current Space"), target: nil, action: nil)
     private let settingsAllSpacesButton = NSButton(checkboxWithTitle: L10n.string("Show on all Spaces"), target: nil, action: nil)
+    private let settingsShowDockIconButton = NSButton(checkboxWithTitle: L10n.string("Show FindAll in the Dock"), target: nil, action: nil)
     private let fileManagerPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let languagePopup = NSPopUpButton(frame: .zero, pullsDown: true)
 
@@ -461,6 +462,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         settingsKeepOnTopButton.action = #selector(settingsWindowBehaviorChanged(_:))
         settingsAllSpacesButton.target = self
         settingsAllSpacesButton.action = #selector(settingsWindowBehaviorChanged(_:))
+        settingsShowDockIconButton.target = self
+        settingsShowDockIconButton.action = #selector(showDockIconChanged(_:))
 
         let layoutHeading = NSTextField(labelWithString: L10n.string("Result List Layout"))
         layoutHeading.font = .boldSystemFont(ofSize: 17)
@@ -503,6 +506,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             resetWindowSize,
             settingsKeepOnTopButton,
             settingsAllSpacesButton,
+            settingsShowDockIconButton,
             layoutHeading,
             layoutHelp,
             sizingRow,
@@ -515,7 +519,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         stack.alignment = .leading
         stack.spacing = 10
         stack.setCustomSpacing(18, after: languageRow)
-        stack.setCustomSpacing(18, after: settingsAllSpacesButton)
+        stack.setCustomSpacing(18, after: settingsShowDockIconButton)
         stack.setCustomSpacing(18, after: resetLayout)
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
@@ -689,6 +693,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         rebuildColumnSizingMenu()
         settingsKeepOnTopButton.state = WindowPreferences.keepOnTop ? .on : .off
         settingsAllSpacesButton.state = WindowPreferences.showOnAllSpaces ? .on : .off
+        settingsShowDockIconButton.state = WindowPreferences.showDockIcon ? .on : .off
 
         rebuildFileManagerMenu()
     }
@@ -871,7 +876,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             AppLanguagePreferences.select(language)
             self.rebuildLanguageMenu()
             guard let delegate = NSApp.delegate as? AppDelegate else {
-                self.showLanguageRestartFailure(
+                self.showRestartFailure(
                     title: failureTitle,
                     message: failureMessage,
                     buttonTitle: failureButtonTitle
@@ -879,7 +884,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
                 return
             }
             delegate.relaunchApplication { [weak self] _ in
-                self?.showLanguageRestartFailure(
+                self?.showRestartFailure(
                     title: failureTitle,
                     message: failureMessage,
                     buttonTitle: failureButtonTitle
@@ -888,7 +893,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         }
     }
 
-    private func showLanguageRestartFailure(title: String, message: String, buttonTitle: String) {
+    private func showRestartFailure(title: String, message: String, buttonTitle: String) {
         guard let window else { return }
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -913,6 +918,50 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             WindowPreferences.keepOnTop = sender.state == .on
         } else if sender === settingsAllSpacesButton {
             WindowPreferences.showOnAllSpaces = sender.state == .on
+        }
+    }
+
+    @objc private func showDockIconChanged(_ sender: NSButton) {
+        let shouldShowDockIcon = sender.state == .on
+        let currentValue = WindowPreferences.showDockIcon
+        guard shouldShowDockIcon != currentValue, let window else {
+            settingsShowDockIconButton.state = currentValue ? .on : .off
+            return
+        }
+
+        let failureTitle = L10n.string("Could Not Restart FindAll")
+        let failureMessage = L10n.string("The Dock icon change will apply the next time you open FindAll.")
+        let failureButtonTitle = L10n.string("OK")
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = L10n.string("Change Dock Icon Visibility?")
+        alert.informativeText = L10n.string("FindAll needs to restart to change its Dock icon visibility. When hidden, use the global keyboard shortcut to show FindAll.")
+        alert.addButton(withTitle: L10n.string("Restart and Apply"))
+        alert.addButton(withTitle: L10n.string("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            guard response == .alertFirstButtonReturn else {
+                self.settingsShowDockIconButton.state = currentValue ? .on : .off
+                return
+            }
+
+            WindowPreferences.showDockIcon = shouldShowDockIcon
+            self.settingsShowDockIconButton.state = shouldShowDockIcon ? .on : .off
+            guard let delegate = NSApp.delegate as? AppDelegate else {
+                self.showRestartFailure(
+                    title: failureTitle,
+                    message: failureMessage,
+                    buttonTitle: failureButtonTitle
+                )
+                return
+            }
+            delegate.relaunchApplication { [weak self] _ in
+                self?.showRestartFailure(
+                    title: failureTitle,
+                    message: failureMessage,
+                    buttonTitle: failureButtonTitle
+                )
+            }
         }
     }
 

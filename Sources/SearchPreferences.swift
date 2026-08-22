@@ -270,6 +270,7 @@ enum WindowPreferences {
         static let savedOrigin = "window.savedOrigin"
         static let keepOnTop = "window.keepOnTop"
         static let showOnAllSpaces = "window.showOnAllSpaces"
+        static let showDockIcon = "application.showDockIcon"
         static let columnSizingMode = "table.columnSizingMode"
         static let fileManagerChoice = "fileManager.choice"
         static let customFileManagerPath = "fileManager.customPath"
@@ -300,6 +301,14 @@ enum WindowPreferences {
     static var showOnAllSpaces: Bool {
         get { UserDefaults.standard.bool(forKey: Key.showOnAllSpaces) }
         set { set(newValue, forKey: Key.showOnAllSpaces) }
+    }
+
+    static var showDockIcon: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: Key.showDockIcon) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: Key.showDockIcon)
+        }
+        set { set(newValue, forKey: Key.showDockIcon) }
     }
 
     static var columnSizingMode: ColumnSizingMode {

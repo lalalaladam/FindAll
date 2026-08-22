@@ -2,6 +2,8 @@ import AppKit
 import Carbon
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let relaunchDockIconEnvironmentKey = "FINDALL_RELAUNCH_SHOW_DOCK_ICON"
+
     private var mainWindowController: MainWindowController!
     private var preferencesWindowController: PreferencesWindowController?
     private var aboutWindowController: AboutWindowController?
@@ -9,7 +11,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyHandlerRef: EventHandlerRef?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+        let relaunchDockIconValue = ProcessInfo.processInfo.environment[Self.relaunchDockIconEnvironmentKey]
+        let showsDockIcon: Bool
+        switch relaunchDockIconValue {
+        case "1": showsDockIcon = true
+        case "0": showsDockIcon = false
+        default: showsDockIcon = WindowPreferences.showDockIcon
+        }
+        NSApp.setActivationPolicy(showsDockIcon ? .regular : .accessory)
         mainWindowController = MainWindowController()
         configureMainMenu()
         refreshShortcutConfiguration()
@@ -103,9 +112,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.hotKeyRef = nil
         }
 
+        _ = UserDefaults.standard.synchronize()
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         configuration.createsNewApplicationInstance = true
+        configuration.environment = [
+            Self.relaunchDockIconEnvironmentKey: WindowPreferences.showDockIcon ? "1" : "0"
+        ]
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { [weak self] _, error in
             DispatchQueue.main.async {
                 if let error {
