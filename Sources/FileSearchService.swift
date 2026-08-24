@@ -157,6 +157,76 @@ struct SearchResult: Hashable {
     let isDirectory: Bool
 
     var path: String { url.path }
+
+    var isBrowsableDirectory: Bool {
+        guard isDirectory,
+              let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]) else { return false }
+        return values.isDirectory == true && values.isPackage != true
+    }
+
+    static func load(from url: URL) -> Result<SearchResult, FileResultFailure> {
+        let requiredKeys: Set<URLResourceKey> = [
+            .contentModificationDateKey,
+            .fileSizeKey,
+            .isDirectoryKey,
+            .isPackageKey
+        ]
+        do {
+            let values = try url.resourceValues(forKeys: requiredKeys)
+            let descriptiveValues = try? url.resourceValues(forKeys: [
+                .contentTypeKey,
+                .localizedNameKey,
+                .localizedTypeDescriptionKey
+            ])
+            let isDirectory = values.isDirectory == true && values.isPackage != true
+            let fallbackContentType: UTType? = {
+                if values.isDirectory == true && values.isPackage != true { return .folder }
+                guard !url.pathExtension.isEmpty else { return nil }
+                return UTType(filenameExtension: url.pathExtension)
+            }()
+            let contentType = descriptiveValues?.contentType ?? fallbackContentType
+            let displayName = descriptiveValues?.localizedName
+                ?? (url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent)
+            let fullKind = descriptiveValues?.localizedTypeDescription
+                ?? contentType?.localizedDescription
+                ?? ""
+            let contentTypeIdentifier = contentType?.identifier
+            return .success(SearchResult(
+                url: url,
+                displayName: displayName,
+                kind: SearchResultKindSupport.displayKind(
+                    for: url,
+                    contentTypeIdentifier: contentTypeIdentifier,
+                    fullKind: fullKind,
+                    isDirectory: isDirectory
+                ),
+                fullKind: fullKind,
+                contentTypeIdentifier: contentTypeIdentifier,
+                size: values.isDirectory == true ? nil : values.fileSize.map(Int64.init),
+                modifiedAt: values.contentModificationDate,
+                isDirectory: isDirectory
+            ))
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == NSCocoaErrorDomain {
+                let cocoaCode = CocoaError.Code(rawValue: nsError.code)
+                if cocoaCode == .fileNoSuchFile || cocoaCode == .fileReadNoSuchFile {
+                    return .failure(.notFound)
+                }
+                if cocoaCode == .fileReadNoPermission {
+                    return .failure(.inaccessible)
+                }
+            }
+            return FileManager.default.fileExists(atPath: url.path)
+                ? .failure(.inaccessible)
+                : .failure(.notFound)
+        }
+    }
+}
+
+enum FileResultFailure: Error {
+    case notFound
+    case inaccessible
 }
 
 struct SearchRequest: Equatable {
@@ -514,11 +584,6 @@ final class FileSearchService: NSObject {
         var summary: PathSearchSummary
     }
 
-    private enum PathResolutionFailure: Error {
-        case notFound
-        case inaccessible
-    }
-
     private static func resolvePaths(
         _ inputs: [String],
         limit: Int,
@@ -553,7 +618,7 @@ final class FileSearchService: NSObject {
                 recordIssue(input, reason: .duplicate)
                 continue
             }
-            switch result(for: normalizedURL) {
+            switch SearchResult.load(from: normalizedURL) {
             case let .success(result):
                 results.append(result)
             case let .failure(failure):
@@ -604,65 +669,6 @@ final class FileSearchService: NSObject {
         let expanded = (value as NSString).expandingTildeInPath
         guard expanded.hasPrefix("/") else { return nil }
         return URL(fileURLWithPath: expanded).standardizedFileURL
-    }
-
-    private static func result(for url: URL) -> Result<SearchResult, PathResolutionFailure> {
-        let requiredKeys: Set<URLResourceKey> = [
-            .contentModificationDateKey,
-            .fileSizeKey,
-            .isDirectoryKey,
-            .isPackageKey
-        ]
-        do {
-            let values = try url.resourceValues(forKeys: requiredKeys)
-            let descriptiveValues = try? url.resourceValues(forKeys: [
-                .contentTypeKey,
-                .localizedNameKey,
-                .localizedTypeDescriptionKey
-            ])
-            let isDirectory = values.isDirectory == true && values.isPackage != true
-            let fallbackContentType: UTType? = {
-                if values.isDirectory == true && values.isPackage != true { return .folder }
-                guard !url.pathExtension.isEmpty else { return nil }
-                return UTType(filenameExtension: url.pathExtension)
-            }()
-            let contentType = descriptiveValues?.contentType ?? fallbackContentType
-            let displayName = descriptiveValues?.localizedName
-                ?? (url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent)
-            let fullKind = descriptiveValues?.localizedTypeDescription
-                ?? contentType?.localizedDescription
-                ?? ""
-            let contentTypeIdentifier = contentType?.identifier
-            return .success(SearchResult(
-                url: url,
-                displayName: displayName,
-                kind: SearchResultKindSupport.displayKind(
-                    for: url,
-                    contentTypeIdentifier: contentTypeIdentifier,
-                    fullKind: fullKind,
-                    isDirectory: isDirectory
-                ),
-                fullKind: fullKind,
-                contentTypeIdentifier: contentTypeIdentifier,
-                size: values.isDirectory == true ? nil : values.fileSize.map(Int64.init),
-                modifiedAt: values.contentModificationDate,
-                isDirectory: isDirectory
-            ))
-        } catch {
-            let nsError = error as NSError
-            if nsError.domain == NSCocoaErrorDomain {
-                let cocoaCode = CocoaError.Code(rawValue: nsError.code)
-                if cocoaCode == .fileNoSuchFile || cocoaCode == .fileReadNoSuchFile {
-                    return .failure(.notFound)
-                }
-                if cocoaCode == .fileReadNoPermission {
-                    return .failure(.inaccessible)
-                }
-            }
-            return FileManager.default.fileExists(atPath: url.path)
-                ? .failure(.inaccessible)
-                : .failure(.notFound)
-        }
     }
 
     private static func makeResult(_ item: NSMetadataItem) -> SearchResult? {

@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let relaunchDockIconEnvironmentKey = "FINDALL_RELAUNCH_SHOW_DOCK_ICON"
 
     private var mainWindowController: MainWindowController!
+    private let folderContentsWindowManager = FolderContentsWindowManager()
     private var preferencesWindowController: PreferencesWindowController?
     private var aboutWindowController: AboutWindowController?
     private var hotKeyRef: EventHotKeyRef?
@@ -23,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = NSApp.setActivationPolicy(.regular)
         }
         mainWindowController = MainWindowController()
+        mainWindowController.onShowFolderContents = { [weak self] url, sourceWindow in
+            self?.folderContentsWindowManager.showContents(of: url, relativeTo: sourceWindow)
+        }
         configureMainMenu()
         refreshShortcutConfiguration()
         if !wasLaunchedAsLoginItem {
@@ -122,6 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.keyEquivalentModifierMask = shortcut.modifiers
         }
         mainWindowController.refreshContextMenuShortcuts()
+        folderContentsWindowManager.refreshShortcutConfiguration()
         registerGlobalHotKey()
     }
 

@@ -1,5 +1,6 @@
 "%@ → press new shortcut" = "%@ → 请按新快捷键";
 "%lld results" = "%lld 个结果";
+"%lld selected" = "已选择 %lld 项";
 "A native, keyboard-friendly file search interface for macOS." = "原生、键盘友好的 macOS 文件搜索工具。";
 "About FindAll" = "关于 FindAll";
 "Add" = "添加";
@@ -12,6 +13,7 @@
 "Applications" = "应用程序";
 "Application" = "应用";
 "Archives" = "压缩包";
+"Archives and Disk Images" = "压缩包与磁盘映像";
 "Audio" = "音频";
 "Contains" = "包含";
 "Starts With" = "开头";
@@ -43,6 +45,7 @@
 "At app launch:" = "应用启动时：";
 "Current shortcut: %@" = "当前快捷键：%@";
 "Could Not Show Info" = "无法显示简介";
+"Could not read folder contents" = "无法读取文件夹内容";
 "Could Not Restart FindAll" = "无法重新启动 FindAll";
 "Cut" = "剪切";
 "Default ordering:" = "默认排序：";
@@ -64,6 +67,7 @@
 "Finder could not open the information window for the selected item." = "访达无法为所选项目打开简介窗口。";
 "Finder could not open the information window. Allow FindAll to control Finder in Privacy & Security > Automation, then try again." = "访达无法打开简介窗口。请在“隐私与安全性”>“自动化”中允许 FindAll 控制访达，然后重试。";
 "FindAll Result List" = "FindAll 结果列表";
+"FindAll File Lists" = "FindAll 文件列表";
 "Folder rules are applied first. Results within the same priority use the selected ordering." = "文件夹优先级会先应用，同一优先级内的结果再按所选方式排序。";
 "Folder" = "文件夹";
 "Folders" = "文件夹";
@@ -82,6 +86,7 @@
 "Hide FindAll" = "隐藏 FindAll";
 "Hide Others" = "隐藏其他";
 "Images" = "图片";
+"Loading folder contents…" = "正在载入文件夹内容…";
 "Language" = "语言";
 "Application language:" = "应用语言：";
 "Startup & Presence" = "启动与显示";
@@ -152,6 +157,7 @@
 "Result list" = "结果列表";
 "Reveal in Finder" = "在访达中显示";
 "Show in File Manager" = "在文件管理器中显示";
+"Show Folder Contents in New Window" = "在新窗口查看文件夹内容";
 "Scope:" = "范围：";
 "Search & Ranking" = "搜索与排序";
 "Search Folders and Priorities" = "搜索文件夹与优先级";
@@ -177,6 +183,7 @@
 "Size (Largest First)" = "大小（最大优先）";
 "Size (Smallest First)" = "大小（最小优先）";
 "Size" = "大小";
+"Spreadsheets" = "电子表格";
 "Sort:" = "排序：";
 "Space" = "空格";
 "Spotlight did not respond. Make sure Spotlight indexing is enabled." = "Spotlight 没有响应，请确认 Spotlight 索引已启用。";
@@ -221,6 +228,7 @@
 "Type:" = "类型：";
 "Temporary Scope" = "临时范围";
 "These shortcuts work only when the result list has keyboard focus and an item is selected." = "这些快捷键仅在结果列表获得键盘焦点且已有项目被选中时生效。";
+"These shortcuts work when a FindAll file list has keyboard focus and an item is selected." = "这些快捷键在任一 FindAll 文件列表获得键盘焦点且已有项目被选中时生效。";
 "Choose Temporary Folder…" = "选择临时文件夹…";
 "Get Info" = "显示简介";
 "Later" = "稍后";
@@ -228,6 +236,14 @@
 "Version %@ (Build %@)" = "版本 %@（构建 %@）";
 "Version: v%@" = "版本：v%@";
 "Videos" = "视频";
+"Presentations" = "演示文稿";
+"Text and Documents" = "文字与文稿";
+"Other Files" = "其他文件";
+"Refresh" = "刷新";
+"Group by Type" = "按类型分组";
+"%@ (%lld)" = "%@（%lld）";
+"%lld items" = "%lld 个项目";
+"%lld items, %lld unavailable" = "%lld 个项目，%lld 个无法访问";
 "Window" = "窗口";
 "Window & Layout" = "窗口与布局";
 "Window Presentation" = "窗口显示";

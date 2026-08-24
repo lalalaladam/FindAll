@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 enum CommandID: String, CaseIterable {
     case globalToggle
     case open
+    case showFolderContents
     case quickLook
     case reveal
     case copyFiles
@@ -13,13 +14,14 @@ enum CommandID: String, CaseIterable {
     case getInfo
 
     static let resultListCommands: [CommandID] = [
-        .open, .quickLook, .reveal, .copyFiles, .copyPath, .share, .getInfo
+        .open, .showFolderContents, .quickLook, .reveal, .copyFiles, .copyPath, .share, .getInfo
     ]
 
     var title: String {
         switch self {
         case .globalToggle: return L10n.string("Show or hide FindAll")
         case .open: return L10n.string("Open selected items")
+        case .showFolderContents: return L10n.string("Show Folder Contents in New Window")
         case .quickLook: return L10n.string("Quick Look")
         case .reveal: return L10n.string("Show in File Manager")
         case .copyFiles: return L10n.string("Copy Files")
@@ -59,6 +61,10 @@ struct KeyboardShortcut: Codable, Equatable {
         case 49: return " "
         case 51: return "\u{8}"
         case 53: return "\u{1b}"
+        case 123: return "\u{F702}"
+        case 124: return "\u{F703}"
+        case 125: return "\u{F701}"
+        case 126: return "\u{F700}"
         default: return characters.lowercased()
         }
     }
@@ -99,6 +105,7 @@ enum ShortcutSettings {
     private static let defaults: [CommandID: KeyboardShortcut] = [
         .globalToggle: KeyboardShortcut(keyCode: 49, modifiersRawValue: NSEvent.ModifierFlags.option.rawValue, characters: " "),
         .open: KeyboardShortcut(keyCode: 36, modifiersRawValue: 0, characters: "\r"),
+        .showFolderContents: KeyboardShortcut(keyCode: 125, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "\u{F701}"),
         .quickLook: KeyboardShortcut(keyCode: 49, modifiersRawValue: 0, characters: " "),
         .reveal: KeyboardShortcut(keyCode: 36, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "\r"),
         .copyFiles: KeyboardShortcut(keyCode: 8, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "c"),
@@ -574,9 +581,9 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
         let globalHeading = NSTextField(labelWithString: L10n.string("Available in Any Application"))
         globalHeading.font = .boldSystemFont(ofSize: 14)
         let globalRows = makeShortcutRows(commands: [.globalToggle])
-        let resultsHeading = NSTextField(labelWithString: L10n.string("FindAll Result List"))
+        let resultsHeading = NSTextField(labelWithString: L10n.string("FindAll File Lists"))
         resultsHeading.font = .boldSystemFont(ofSize: 14)
-        let resultsHelp = NSTextField(wrappingLabelWithString: L10n.string("These shortcuts work only when the result list has keyboard focus and an item is selected."))
+        let resultsHelp = NSTextField(wrappingLabelWithString: L10n.string("These shortcuts work when a FindAll file list has keyboard focus and an item is selected."))
         resultsHelp.textColor = .secondaryLabelColor
         let resultRows = makeShortcutRows(commands: CommandID.resultListCommands)
 

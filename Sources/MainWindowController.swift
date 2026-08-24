@@ -2,6 +2,8 @@ import AppKit
 import QuickLookUI
 
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTextViewDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
+    var onShowFolderContents: ((URL, NSWindow?) -> Void)?
+
     private let searchField = NSSearchField()
     private let pathInputScrollView = NSScrollView()
     private let pathInputTextView = PathInputTextView()
@@ -19,6 +21,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private let scrollView = NSScrollView()
     private let tableView = ActionTableView()
     private let statusLabel = WindowDragTextField(labelWithString: L10n.string("Type a query and press Return"))
+    private let selectionStatusLabel = WindowDragTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
     private let keepOnTopSwitch = NSSwitch()
     private let allSpacesSwitch = NSSwitch()
@@ -212,6 +215,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.font = .systemFont(ofSize: 12)
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        selectionStatusLabel.textColor = .secondaryLabelColor
+        selectionStatusLabel.font = .systemFont(ofSize: 12)
+        selectionStatusLabel.isHidden = true
+        selectionStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
@@ -238,6 +245,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let statusSpacer = WindowDragView()
         statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        selectionStatusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        selectionStatusLabel.setContentHuggingPriority(.required, for: .horizontal)
         let keepOnTopControl = labeledSwitch(
             title: L10n.string("Keep on top in current Space"),
             control: keepOnTopSwitch
@@ -246,9 +255,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             title: L10n.string("Show on all Spaces"),
             control: allSpacesSwitch
         )
-        let statusBar = WindowDragStackView(views: [spinner, statusLabel, statusSpacer, keepOnTopControl, allSpacesControl])
+        let statusBar = WindowDragStackView(views: [spinner, statusLabel, selectionStatusLabel, statusSpacer, keepOnTopControl, allSpacesControl])
         statusBar.orientation = .horizontal
         statusBar.alignment = .centerY
+        statusBar.detachesHiddenViews = true
         statusBar.spacing = 8
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         let statusSeparator = NSBox()
@@ -587,10 +597,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         tableView.autoresizingMask = [.height]
         tableView.delegate = self
         tableView.dataSource = self
-        tableView.doubleAction = #selector(openSelection(_:))
+        tableView.doubleAction = #selector(openDoubleClickedRow(_:))
         tableView.target = self
         tableView.onQuickLook = { [weak self] in self?.toggleQuickLook(nil) }
         tableView.onOpen = { [weak self] in self?.openSelection(nil) }
+        tableView.onShowFolderContents = { [weak self] in self?.showFolderContents(nil) }
         tableView.onReveal = { [weak self] in self?.revealSelection(nil) }
         tableView.onShare = { [weak self] in self?.shareSelection(nil) }
         tableView.onGetInfo = { [weak self] in self?.showFinderInfo(nil) }
@@ -639,6 +650,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let reveal = menu.addItem(withTitle: L10n.string("Show in File Manager"), action: #selector(revealSelection(_:)), keyEquivalent: "")
         reveal.identifier = NSUserInterfaceItemIdentifier("command.reveal")
         reveal.target = self
+        let showFolderContents = menu.addItem(
+            withTitle: L10n.string("Show Folder Contents in New Window"),
+            action: #selector(showFolderContents(_:)),
+            keyEquivalent: ""
+        )
+        showFolderContents.identifier = NSUserInterfaceItemIdentifier("command.showFolderContents")
+        showFolderContents.target = self
         menu.addItem(.separator())
         let info = menu.addItem(withTitle: L10n.string("Get Info"), action: #selector(showFinderInfo(_:)), keyEquivalent: "")
         info.identifier = NSUserInterfaceItemIdentifier("command.getInfo")
@@ -1087,6 +1105,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         guard menu === tableView.menu else { return }
         updateOpenWithMenu(in: menu)
         updateRevealMenuItem(in: menu)
+        updateShowFolderContentsMenuItem(in: menu)
+    }
+
+    private func updateShowFolderContentsMenuItem(in menu: NSMenu) {
+        guard let item = menu.items.first(where: { $0.identifier?.rawValue == "command.showFolderContents" }) else { return }
+        item.isHidden = selectedFolderURLForContents == nil
     }
 
     private func updateRevealMenuItem(in menu: NSMenu) {
@@ -1389,6 +1413,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         }
         scrollView.contentView.scroll(to: scrollOrigin)
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        updateSelectionStatus()
         DispatchQueue.main.async { [weak self] in self?.layoutColumns() }
     }
 
@@ -1588,6 +1613,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     func numberOfRows(in tableView: NSTableView) -> Int { results.count }
 
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateSelectionStatus()
+    }
+
+    private func updateSelectionStatus() {
+        let selectionCount = selectedURLs.count
+        selectionStatusLabel.isHidden = selectionCount == 0
+        selectionStatusLabel.stringValue = String.localizedStringWithFormat(
+            L10n.string("%lld selected"),
+            Int64(selectionCount)
+        )
+    }
+
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
         guard results.indices.contains(row) else { return nil }
         return results[row].url as NSURL
@@ -1664,6 +1702,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         tableView.selectedRowIndexes.compactMap { $0 < results.count ? results[$0].url : nil }
     }
 
+    @objc private func openDoubleClickedRow(_ sender: NSTableView) {
+        guard sender === tableView, results.indices.contains(sender.clickedRow) else { return }
+        openSelection(sender)
+    }
+
     @objc func openSelection(_ sender: Any?) {
         let selectedResults = tableView.selectedRowIndexes.compactMap { $0 < results.count ? results[$0] : nil }
         guard !selectedResults.isEmpty else { return }
@@ -1682,6 +1725,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let urls = selectedURLs
         guard !urls.isEmpty else { return }
         FileManagerSupport.reveal(urls)
+    }
+
+    @objc func showFolderContents(_ sender: Any?) {
+        guard let folderURL = selectedFolderURLForContents else { return }
+        onShowFolderContents?(folderURL, window)
+    }
+
+    private var selectedFolderURLForContents: URL? {
+        let selectedResults = tableView.selectedRowIndexes.compactMap { $0 < results.count ? results[$0] : nil }
+        guard selectedResults.count == 1, selectedResults[0].isBrowsableDirectory else { return nil }
+        return selectedResults[0].url
     }
 
     @objc private func openSelectionWithApplication(_ sender: NSMenuItem) {
@@ -1813,6 +1867,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! { selectedURLs[index] as NSURL }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(showFolderContents(_:)) {
+            return selectedFolderURLForContents != nil
+        }
         if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(showFinderInfo(_:)), #selector(shareSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
             return !selectedURLs.isEmpty
         }
@@ -2159,6 +2216,7 @@ private final class PathInputTextView: NSTextView {
 private final class ActionTableView: NSTableView {
     var onQuickLook: (() -> Void)?
     var onOpen: (() -> Void)?
+    var onShowFolderContents: (() -> Void)?
     var onReveal: (() -> Void)?
     var onShare: (() -> Void)?
     var onGetInfo: (() -> Void)?
@@ -2179,6 +2237,8 @@ private final class ActionTableView: NSTableView {
     override func keyDown(with event: NSEvent) {
         if ShortcutSettings.shortcut(for: .open).matches(event) {
             onOpen?()
+        } else if ShortcutSettings.shortcut(for: .showFolderContents).matches(event) {
+            onShowFolderContents?()
         } else if ShortcutSettings.shortcut(for: .quickLook).matches(event) {
             onQuickLook?()
         } else if ShortcutSettings.shortcut(for: .reveal).matches(event) {
@@ -2225,7 +2285,7 @@ private final class ResultTableCellView: NSTableCellView {
     }
 }
 
-private final class FittedTableHeaderView: NSTableHeaderView {
+final class FittedTableHeaderView: NSTableHeaderView {
     var usesFittedResizing: (() -> Bool)?
     var resizeDirections: ((Int) -> (left: Bool, right: Bool))?
     var onResizeWillBegin: (() -> Void)?
