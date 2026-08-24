@@ -127,13 +127,15 @@ enum SearchMatchMode: String, CaseIterable, Codable {
     case contains
     case prefix
     case exact
+    case keywords
     case path
 
     var title: String {
         switch self {
         case .contains: return L10n.string("Contains")
-        case .prefix: return L10n.string("Starts With")
+        case .prefix: return L10n.string("Prefix")
         case .exact: return L10n.string("Exact")
+        case .keywords: return L10n.string("Keywords")
         case .path: return L10n.string("Path")
         }
     }
@@ -146,8 +148,22 @@ enum SearchMatchMode: String, CaseIterable, Codable {
             return L10n.string("Matches file names that start with the entered text")
         case .exact:
             return L10n.string("Matches the complete file name")
+        case .keywords:
+            return L10n.string("Matches all or any of the entered keywords")
         case .path:
             return L10n.string("Resolves one or more complete file or folder paths")
+        }
+    }
+}
+
+enum KeywordMatchRelation: String, CaseIterable, Codable {
+    case all
+    case any
+
+    var title: String {
+        switch self {
+        case .all: return L10n.string("All keywords")
+        case .any: return L10n.string("Any keyword")
         }
     }
 }
@@ -490,6 +506,7 @@ enum SearchPreferences {
         static let category = "search.category"
         static let scopePath = "search.scopePath"
         static let matchMode = "search.matchMode"
+        static let keywordRelation = "search.keywordRelation"
         static let sortMode = "results.sortMode"
         static let prioritizeFolderRules = "results.prioritizeFolderRules"
         static let foldersFirst = "results.foldersFirst"
@@ -517,6 +534,18 @@ enum SearchPreferences {
         get { SearchMatchMode(rawValue: UserDefaults.standard.string(forKey: Key.matchMode) ?? "") ?? .contains }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: Key.matchMode)
+            notify()
+        }
+    }
+
+    static var keywordRelation: KeywordMatchRelation {
+        get {
+            KeywordMatchRelation(
+                rawValue: UserDefaults.standard.string(forKey: Key.keywordRelation) ?? ""
+            ) ?? .all
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: Key.keywordRelation)
             notify()
         }
     }

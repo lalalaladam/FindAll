@@ -1,10 +1,19 @@
 import AppKit
 import QuickLookUI
 
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTextViewDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTokenFieldDelegate, NSTextViewDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
     var onShowFolderContents: ((URL, NSWindow?) -> Void)?
 
     private let searchField = NSSearchField()
+    private let keywordField = KeywordTokenField()
+    private let addKeywordButton = NSButton()
+    private let keywordRelationControl = NSSegmentedControl(
+        labels: [L10n.string("All"), L10n.string("Any")],
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
+    private let keywordInputStack = NSStackView()
     private let pathInputScrollView = NSScrollView()
     private let pathInputTextView = PathInputTextView()
     private let matchModeControl = NSSegmentedControl(
@@ -30,6 +39,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var results: [SearchResult] = []
     private var lastSearchRequest: SearchRequest?
     private var isChangingMatchMode = false
+    private var isChangingKeywordRelation = false
     private var filterBarSearchTopConstraint: NSLayoutConstraint?
     private var filterBarPathTopConstraint: NSLayoutConstraint?
     private var matchModeSearchCenterConstraint: NSLayoutConstraint?
@@ -171,7 +181,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             showWindow(nil)
             window?.makeKeyAndOrderFront(nil)
         }
-        focusActiveSearchInput()
+        window?.contentView?.layoutSubtreeIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window?.isVisible == true else { return }
+            self.focusActiveSearchInput()
+        }
         showFullDiskAccessNoticeIfNeeded()
     }
 
@@ -194,6 +208,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
         configurePathInput()
+        configureKeywordInput()
 
         matchModeControl.controlSize = .regular
         matchModeControl.segmentStyle = .rounded
@@ -265,7 +280,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         statusSeparator.boxType = .separator
         statusSeparator.translatesAutoresizingMaskIntoConstraints = false
 
-        [searchField, pathInputScrollView, filterBar, matchModeControl, scrollView, statusSeparator, statusBar].forEach(content.addSubview)
+        [searchField, keywordInputStack, pathInputScrollView, filterBar, matchModeControl, scrollView, statusSeparator, statusBar].forEach(content.addSubview)
 
         let filterBarSearchTopConstraint = filterBar.topAnchor.constraint(
             equalTo: searchField.bottomAnchor,
@@ -296,6 +311,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             searchField.trailingAnchor.constraint(equalTo: matchModeControl.leadingAnchor, constant: -8),
             searchField.heightAnchor.constraint(equalToConstant: 32),
 
+            keywordInputStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 7),
+            keywordInputStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            keywordInputStack.trailingAnchor.constraint(equalTo: matchModeControl.leadingAnchor, constant: -8),
+            keywordInputStack.heightAnchor.constraint(equalToConstant: 32),
+
             pathInputScrollView.topAnchor.constraint(equalTo: content.topAnchor, constant: 7),
             pathInputScrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
             pathInputScrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
@@ -303,7 +323,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
             matchModeSearchCenterConstraint,
             matchModeSearchTrailingConstraint,
-            matchModeControl.widthAnchor.constraint(equalToConstant: 280),
+            matchModeControl.widthAnchor.constraint(equalToConstant: 300),
             matchModeControl.heightAnchor.constraint(equalToConstant: 28),
 
             filterBarSearchTopConstraint,
@@ -387,6 +407,67 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         settingsButton.toolTip = L10n.string("Settings")
         settingsButton.target = self
         settingsButton.action = #selector(openSettings(_:))
+    }
+
+    private func configureKeywordInput() {
+        keywordField.delegate = self
+        keywordField.placeholderString = L10n.string("Enter a keyword, then press Return or Add")
+        keywordField.tokenStyle = .rounded
+        keywordField.tokenizingCharacterSet = .newlines
+        keywordField.cell?.isScrollable = true
+        keywordField.cell?.wraps = false
+        keywordField.cell?.usesSingleLineMode = true
+        keywordField.onSearch = { [weak self] in
+            self?.commitCurrentKeyword(searchAfterCommit: true)
+        }
+        keywordField.setAccessibilityLabel(L10n.string("Keyword input"))
+        keywordField.toolTip = L10n.string("Press Command-Return to search the entered keywords")
+        keywordField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        addKeywordButton.bezelStyle = .texturedRounded
+        addKeywordButton.controlSize = .regular
+        addKeywordButton.image = NSImage(
+            systemSymbolName: "plus",
+            accessibilityDescription: L10n.string("Add keyword")
+        )
+        addKeywordButton.toolTip = L10n.string("Add keyword")
+        addKeywordButton.target = self
+        addKeywordButton.action = #selector(addKeyword(_:))
+        addKeywordButton.setAccessibilityLabel(L10n.string("Add keyword"))
+
+        keywordRelationControl.controlSize = .small
+        keywordRelationControl.segmentStyle = .rounded
+        keywordRelationControl.target = self
+        keywordRelationControl.action = #selector(keywordRelationChanged(_:))
+        keywordRelationControl.setAccessibilityLabel(L10n.string("Keyword matching"))
+        keywordRelationControl.setToolTip(
+            L10n.string("Require every keyword"),
+            forSegment: 0
+        )
+        keywordRelationControl.setToolTip(L10n.string("Match at least one keyword"), forSegment: 1)
+
+        keywordInputStack.orientation = .horizontal
+        keywordInputStack.alignment = .centerY
+        keywordInputStack.spacing = 6
+        keywordInputStack.detachesHiddenViews = true
+        keywordInputStack.translatesAutoresizingMaskIntoConstraints = false
+        keywordInputStack.setViews(
+            [keywordField, addKeywordButton, keywordRelationControl],
+            in: .leading
+        )
+
+        keywordField.translatesAutoresizingMaskIntoConstraints = false
+        addKeywordButton.translatesAutoresizingMaskIntoConstraints = false
+        keywordRelationControl.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            keywordField.heightAnchor.constraint(equalToConstant: 32),
+            addKeywordButton.widthAnchor.constraint(equalToConstant: 28),
+            addKeywordButton.heightAnchor.constraint(equalToConstant: 28),
+            keywordRelationControl.widthAnchor.constraint(equalToConstant: 94),
+            keywordRelationControl.heightAnchor.constraint(equalToConstant: 26)
+        ])
+        keywordInputStack.isHidden = true
+        keywordRelationControl.isHidden = true
     }
 
     private func configurePathInput() {
@@ -531,14 +612,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         prioritizeFoldersButton.state = SearchPreferences.prioritizeFolderRules ? .on : .off
         foldersFirstButton.state = SearchPreferences.foldersFirst ? .on : .off
         matchModeControl.selectedSegment = SearchMatchMode.allCases.firstIndex(of: SearchPreferences.matchMode) ?? 0
+        keywordRelationControl.selectedSegment = SearchPreferences.keywordRelation == .all ? 0 : 1
+        updateKeywordRelationVisibility()
         updateControlsForSearchMode()
         synchronizeTableSortDescriptor()
     }
 
     private func updateControlsForSearchMode() {
         let isPathMode = SearchPreferences.matchMode == .path
+        let isKeywordMode = SearchPreferences.matchMode == .keywords
         pathIgnoredFilterViews.forEach { $0.isHidden = isPathMode }
-        searchField.isHidden = isPathMode
+        searchField.isHidden = isPathMode || isKeywordMode
+        keywordInputStack.isHidden = !isKeywordMode
         pathInputScrollView.isHidden = !isPathMode
         filterBarSearchTopConstraint?.isActive = !isPathMode
         filterBarPathTopConstraint?.isActive = isPathMode
@@ -550,12 +635,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         window?.contentView?.layoutSubtreeIfNeeded()
     }
 
-    private func focusActiveSearchInput() {
-        if SearchPreferences.matchMode == .path {
-            window?.makeFirstResponder(pathInputTextView)
-        } else {
-            window?.makeFirstResponder(searchField)
+    private var activeSearchInput: NSView? {
+        switch SearchPreferences.matchMode {
+        case .path:
+            return pathInputTextView
+        case .keywords:
+            return keywordField
+        default:
+            return searchField
         }
+    }
+
+    private func focusActiveSearchInput() {
+        guard let activeSearchInput else { return }
+        window?.initialFirstResponder = activeSearchInput
+        window?.makeFirstResponder(activeSearchInput)
     }
 
     private func scopeTitle(for path: String, among paths: [String]) -> String {
@@ -1279,17 +1373,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     private func currentRequest() -> SearchRequest {
         let matchMode = SearchPreferences.matchMode
+        let keywords = matchMode == .keywords ? currentKeywords : nil
         return SearchRequest(
-            text: currentSearchText,
+            text: matchMode == .keywords ? (keywords ?? []).joined(separator: "\u{1F}") : currentSearchText,
             category: matchMode == .path ? .all : SearchPreferences.category,
             scopePath: matchMode == .path ? nil : SearchPreferences.scopePath,
             matchMode: matchMode,
-            pathInputs: nil
+            pathInputs: nil,
+            keywords: keywords,
+            keywordRelation: SearchPreferences.keywordRelation
         )
     }
 
     private var currentSearchText: String {
-        SearchPreferences.matchMode == .path ? pathInputTextView.string : searchField.stringValue
+        switch SearchPreferences.matchMode {
+        case .path:
+            return pathInputTextView.string
+        case .keywords:
+            return currentKeywords.joined(separator: "\u{1F}")
+        default:
+            return searchField.stringValue
+        }
+    }
+
+    private var currentKeywords: [String] {
+        KeywordSupport.normalized(rawKeywordValues)
+    }
+
+    private var rawKeywordValues: [String] {
+        let values: [String]
+        if let strings = keywordField.objectValue as? [String] {
+            values = strings
+        } else if let objects = keywordField.objectValue as? [Any] {
+            values = objects.compactMap { value in
+                if let string = value as? String { return string }
+                if let string = value as? NSString { return string as String }
+                return nil
+            }
+        } else if let string = keywordField.objectValue as? String {
+            values = [string]
+        } else {
+            values = keywordField.stringValue.isEmpty ? [] : [keywordField.stringValue]
+        }
+        return values
     }
 
     private func performSearch() {
@@ -1308,7 +1434,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             activeSortMode = defaultSortMode
             synchronizeTableSortDescriptor()
         }
-        if isChangingMatchMode {
+        if isChangingMatchMode || isChangingKeywordRelation {
             applyRanking()
             return
         }
@@ -1418,7 +1544,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        if obj.object as? NSTokenField === keywordField {
+            DispatchQueue.main.async { [weak self] in
+                self?.updateKeywordRelationVisibility()
+                self?.updateIdleStatus()
+            }
+        }
         searchInputDidChange()
+    }
+
+    func tokenField(_ tokenField: NSTokenField, shouldAdd tokens: [Any], at index: Int) -> [Any] {
+        guard tokenField === keywordField else { return tokens }
+        let existingTokenCount = (tokenField.currentEditor() as? NSTextView)?.string.unicodeScalars
+            .filter { $0.value == 0xFFFC }
+            .count ?? currentKeywords.count
+        let availableCount = max(0, KeywordSupport.inputLimit - existingTokenCount)
+        let accepted = tokens.compactMap { token -> String? in
+            guard let value = (token as? String) ?? (token as? NSString).map({ $0 as String }) else {
+                return nil
+            }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }.prefix(availableCount)
+        DispatchQueue.main.async { [weak self] in
+            self?.updateKeywordRelationVisibility()
+            self?.updateIdleStatus()
+        }
+        return Array(accepted)
     }
 
     func control(
@@ -1426,6 +1578,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         textView: NSTextView,
         doCommandBy commandSelector: Selector
     ) -> Bool {
+        if control === keywordField,
+           commandSelector == #selector(NSResponder.insertNewline(_:)),
+           !keywordField.hasPendingEditingText {
+            keywordField.collapseSelectionToEnd()
+            return true
+        }
+
         if commandSelector == #selector(NSResponder.moveDown(_:)), !results.isEmpty {
             if tableView.selectedRow < 0 {
                 tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
@@ -1495,10 +1654,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private func searchInputDidChange() {
         searchService.cancel()
         lastSearchRequest = nil
+        updateKeywordRelationVisibility()
         updateIdleStatus()
     }
 
     @objc private func executeSearch(_ sender: Any?) { performSearch() }
+
+    @objc private func addKeyword(_ sender: Any?) {
+        guard SearchPreferences.matchMode == .keywords else { return }
+        commitCurrentKeyword(searchAfterCommit: false)
+    }
+
+    private func commitCurrentKeyword(searchAfterCommit: Bool) {
+        if keywordField.hasPendingEditingText,
+           let editor = keywordField.currentEditor() as? NSTextView {
+            editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.keywordField.currentEditor() == nil {
+                self.window?.makeFirstResponder(self.keywordField)
+            }
+            self.keywordField.collapseSelectionToEnd()
+            self.updateKeywordRelationVisibility()
+            self.updateIdleStatus()
+            if searchAfterCommit { self.performSearch() }
+        }
+    }
+
+    @objc private func keywordRelationChanged(_ sender: NSSegmentedControl) {
+        guard [0, 1].contains(sender.selectedSegment) else { return }
+        searchService.cancel()
+        lastSearchRequest = nil
+        isChangingKeywordRelation = true
+        SearchPreferences.keywordRelation = sender.selectedSegment == 0 ? .all : .any
+        isChangingKeywordRelation = false
+        updateIdleStatus()
+    }
+
+    private func updateKeywordRelationVisibility() {
+        let keywordCount = currentKeywords.count
+        keywordRelationControl.isHidden = SearchPreferences.matchMode != .keywords || keywordCount < 2
+        addKeywordButton.isEnabled = keywordCount < KeywordSupport.inputLimit
+    }
 
     @objc private func matchModeChanged(_ sender: NSSegmentedControl) {
         guard SearchMatchMode.allCases.indices.contains(sender.selectedSegment) else { return }
@@ -1529,6 +1727,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 statusLabel.stringValue = hasText
                     ? L10n.string("Press Command-Return to resolve paths")
                     : L10n.string("Paste paths and press Command-Return")
+            }
+        } else if SearchPreferences.matchMode == .keywords {
+            let keywordCount = currentKeywords.count
+            if keywordCount > 0 {
+                statusLabel.stringValue = String.localizedStringWithFormat(
+                    L10n.string("%lld keywords ready; press Command-Return"),
+                    Int64(keywordCount)
+                )
+            } else {
+                statusLabel.stringValue = L10n.string("Add keywords and press Command-Return")
             }
         } else {
             statusLabel.stringValue = hasText
@@ -2022,6 +2230,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let wasVisible = oldWindow.isVisible
         let shouldRestoreSearchFocus = oldWindow.firstResponder === searchField.currentEditor()
             || oldWindow.firstResponder === searchField
+            || oldWindow.firstResponder === keywordField.currentEditor()
+            || oldWindow.firstResponder === keywordField
+            || oldWindow.firstResponder === pathInputTextView
 
         saveWindowOriginWorkItem?.cancel()
         saveWindowOriginWorkItem = nil
@@ -2046,7 +2257,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 replacement.makeKeyAndOrderFront(nil)
             }
             if shouldRestoreSearchFocus {
-                replacement.makeFirstResponder(searchField)
+                focusActiveSearchInput()
             }
         }
     }
@@ -2162,6 +2373,34 @@ private final class WindowDragStackView: NSStackView {
 
     override func mouseDown(with event: NSEvent) {
         window?.performDrag(with: event)
+    }
+}
+
+private final class KeywordTokenField: NSTokenField {
+    var onSearch: (() -> Void)?
+
+    var hasPendingEditingText: Bool {
+        guard let editor = currentEditor() as? NSTextView else { return false }
+        return editor.string.unicodeScalars.contains { $0.value != 0xFFFC }
+    }
+
+    func collapseSelectionToEnd() {
+        guard let editor = currentEditor() as? NSTextView else { return }
+        let insertionPoint = NSRange(location: editor.string.utf16.count, length: 0)
+        if editor.selectedRange() != insertionPoint {
+            editor.setSelectedRange(insertionPoint)
+        }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let characters = event.charactersIgnoringModifiers
+        let isReturn = characters == "\r" || characters == "\n" || characters == "\u{3}"
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if isReturn, modifiers.contains(.command), currentEditor() != nil {
+            onSearch?()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 }
 
