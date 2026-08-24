@@ -40,6 +40,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private var lastSearchRequest: SearchRequest?
     private var isChangingMatchMode = false
     private var isChangingKeywordRelation = false
+    private var isKeywordCommitFinalizationScheduled = false
+    private var shouldSearchAfterKeywordCommit = false
     private var filterBarSearchTopConstraint: NSLayoutConstraint?
     private var filterBarPathTopConstraint: NSLayoutConstraint?
     private var matchModeSearchCenterConstraint: NSLayoutConstraint?
@@ -209,6 +211,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
         configurePathInput()
         configureKeywordInput()
+        let initialMatchMode = SearchPreferences.matchMode
+        let initialIsPathMode = initialMatchMode == .path
+        searchField.isHidden = initialIsPathMode || initialMatchMode == .keywords
+        keywordInputStack.isHidden = initialMatchMode != .keywords
+        pathInputScrollView.isHidden = !initialIsPathMode
 
         matchModeControl.controlSize = .regular
         matchModeControl.segmentStyle = .rounded
@@ -256,6 +263,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         filterBar.detachesHiddenViews = true
         filterBar.translatesAutoresizingMaskIntoConstraints = false
         pathIgnoredFilterViews = [scopeLabel, scopePopup, categoryLabel, categoryPopup, prioritizeFoldersButton, foldersFirstButton]
+        pathIgnoredFilterViews.forEach { $0.isHidden = initialIsPathMode }
 
         let statusSpacer = WindowDragView()
         statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -292,7 +300,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         )
         self.filterBarSearchTopConstraint = filterBarSearchTopConstraint
         self.filterBarPathTopConstraint = filterBarPathTopConstraint
-        filterBarPathTopConstraint.isActive = false
 
         let matchModeSearchCenterConstraint = matchModeControl.centerYAnchor.constraint(equalTo: searchField.centerYAnchor)
         let matchModePathCenterConstraint = matchModeControl.centerYAnchor.constraint(equalTo: filterBar.centerYAnchor)
@@ -302,8 +309,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         self.matchModePathCenterConstraint = matchModePathCenterConstraint
         self.matchModeSearchTrailingConstraint = matchModeSearchTrailingConstraint
         self.matchModePathTrailingConstraint = matchModePathTrailingConstraint
-        matchModePathCenterConstraint.isActive = false
-        matchModePathTrailingConstraint.isActive = false
+        let initialFilterBarTopConstraint = initialIsPathMode
+            ? filterBarPathTopConstraint
+            : filterBarSearchTopConstraint
+        let initialMatchModeCenterConstraint = initialIsPathMode
+            ? matchModePathCenterConstraint
+            : matchModeSearchCenterConstraint
+        let initialMatchModeTrailingConstraint = initialIsPathMode
+            ? matchModePathTrailingConstraint
+            : matchModeSearchTrailingConstraint
 
         NSLayoutConstraint.activate([
             searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: 7),
@@ -321,12 +335,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             pathInputScrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             pathInputScrollView.heightAnchor.constraint(equalToConstant: 76),
 
-            matchModeSearchCenterConstraint,
-            matchModeSearchTrailingConstraint,
+            initialMatchModeCenterConstraint,
+            initialMatchModeTrailingConstraint,
             matchModeControl.widthAnchor.constraint(equalToConstant: 300),
             matchModeControl.heightAnchor.constraint(equalToConstant: 28),
 
-            filterBarSearchTopConstraint,
+            initialFilterBarTopConstraint,
             filterBar.leadingAnchor.constraint(equalTo: searchField.leadingAnchor),
             filterBar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             filterBar.heightAnchor.constraint(equalToConstant: 27),
@@ -632,6 +646,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         matchModePathCenterConstraint?.isActive = isPathMode
         matchModePathTrailingConstraint?.isActive = isPathMode
         searchField.placeholderString = L10n.string("Search files, folders, and applications")
+        updateKeywordRelationVisibility()
         window?.contentView?.layoutSubtreeIfNeeded()
     }
 
@@ -1400,6 +1415,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         KeywordSupport.normalized(rawKeywordValues)
     }
 
+    private var committedKeywordCount: Int {
+        if let editor = keywordField.currentEditor() as? NSTextView {
+            return editor.string.unicodeScalars.filter { $0.value == 0xFFFC }.count
+        }
+        return currentKeywords.count
+    }
+
     private var rawKeywordValues: [String] {
         let values: [String]
         if let strings = keywordField.objectValue as? [String] {
@@ -1566,11 +1588,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }.prefix(availableCount)
-        DispatchQueue.main.async { [weak self] in
-            self?.updateKeywordRelationVisibility()
-            self?.updateIdleStatus()
+        let acceptedTokens = Array(accepted)
+        if !acceptedTokens.isEmpty {
+            scheduleKeywordCommitFinalization()
         }
-        return Array(accepted)
+        return acceptedTokens
     }
 
     func control(
@@ -1578,11 +1600,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         textView: NSTextView,
         doCommandBy commandSelector: Selector
     ) -> Bool {
-        if control === keywordField,
-           commandSelector == #selector(NSResponder.insertNewline(_:)),
-           !keywordField.hasPendingEditingText {
-            keywordField.collapseSelectionToEnd()
-            return true
+        if control === keywordField {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)),
+               !keywordField.hasPendingEditingText {
+                keywordField.collapseSelectionToEnd()
+                revealLastKeywordTokenMinimally()
+                return true
+            }
+
+            if let clipView = textView.superview as? NSClipView {
+                let previousOrigin = clipView.bounds.origin
+                switch commandSelector {
+                case #selector(NSResponder.moveLeft(_:)):
+                    textView.moveLeft(nil)
+                case #selector(NSResponder.moveRight(_:)):
+                    textView.moveRight(nil)
+                default:
+                    break
+                }
+                if commandSelector == #selector(NSResponder.moveLeft(_:))
+                    || commandSelector == #selector(NSResponder.moveRight(_:)) {
+                    scrollFieldEditorMinimally(
+                        textView,
+                        in: clipView,
+                        from: previousOrigin
+                    )
+                    return true
+                }
+            }
         }
 
         if commandSelector == #selector(NSResponder.moveDown(_:)), !results.isEmpty {
@@ -1605,7 +1650,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         default:
             return false
         }
-        scrollSearchFieldEditorMinimally(
+        scrollFieldEditorMinimally(
             textView,
             in: clipView,
             from: previousOrigin
@@ -1613,36 +1658,53 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         return true
     }
 
-    private func scrollSearchFieldEditorMinimally(
+    private func scrollFieldEditorMinimally(
         _ textView: NSTextView,
         in clipView: NSClipView,
-        from previousOrigin: NSPoint
+        from previousOrigin: NSPoint,
+        targetCharacterRange: NSRange? = nil
     ) {
         guard let layoutManager = textView.layoutManager,
               let textContainer = textView.textContainer else { return }
 
         layoutManager.ensureLayout(for: textContainer)
-        let selectionLocation = textView.selectedRange().location
-        guard selectionLocation != NSNotFound else { return }
+        let characterRange = targetCharacterRange ?? textView.selectedRange()
+        guard characterRange.location != NSNotFound else { return }
         let glyphRange = layoutManager.glyphRange(
-            forCharacterRange: NSRange(location: selectionLocation, length: 0),
+            forCharacterRange: characterRange,
             actualCharacterRange: nil
         )
-        var caretRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-        caretRect.origin.x += textView.textContainerOrigin.x - textView.bounds.minX + textView.frame.minX
+        var targetRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        targetRect.origin.x += textView.textContainerOrigin.x - textView.bounds.minX + textView.frame.minX
 
         let caretMargin: CGFloat = 4
         var targetX = previousOrigin.x
-        if caretRect.maxX > previousOrigin.x + clipView.bounds.width - caretMargin {
-            targetX = caretRect.maxX - clipView.bounds.width + caretMargin
-        } else if caretRect.minX < previousOrigin.x + caretMargin {
-            targetX = caretRect.minX - caretMargin
+        if targetRect.maxX > previousOrigin.x + clipView.bounds.width - caretMargin {
+            targetX = targetRect.maxX - clipView.bounds.width + caretMargin
+        } else if targetRect.minX < previousOrigin.x + caretMargin {
+            targetX = targetRect.minX - caretMargin
         }
 
         let minimumX = textView.frame.minX
         let maximumX = max(minimumX, textView.frame.maxX - clipView.bounds.width)
         targetX = min(max(targetX, minimumX), maximumX)
         clipView.scroll(to: NSPoint(x: targetX, y: previousOrigin.y))
+    }
+
+    private func revealLastKeywordTokenMinimally() {
+        guard let editor = keywordField.currentEditor() as? NSTextView,
+              let clipView = editor.superview as? NSClipView else { return }
+        let tokenRange = (editor.string as NSString).range(
+            of: "\u{FFFC}",
+            options: .backwards
+        )
+        guard tokenRange.location != NSNotFound else { return }
+        scrollFieldEditorMinimally(
+            editor,
+            in: clipView,
+            from: clipView.bounds.origin,
+            targetCharacterRange: tokenRange
+        )
     }
 
     func textDidChange(_ notification: Notification) {
@@ -1666,16 +1728,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func commitCurrentKeyword(searchAfterCommit: Bool) {
+        shouldSearchAfterKeywordCommit = shouldSearchAfterKeywordCommit || searchAfterCommit
         if keywordField.hasPendingEditingText,
            let editor = keywordField.currentEditor() as? NSTextView {
             editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         }
+        scheduleKeywordCommitFinalization()
+    }
+
+    private func scheduleKeywordCommitFinalization() {
+        guard !isKeywordCommitFinalizationScheduled else { return }
+        isKeywordCommitFinalizationScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.isKeywordCommitFinalizationScheduled = false
+            let searchAfterCommit = self.shouldSearchAfterKeywordCommit
+            self.shouldSearchAfterKeywordCommit = false
             if self.keywordField.currentEditor() == nil {
                 self.window?.makeFirstResponder(self.keywordField)
             }
+            self.window?.contentView?.layoutSubtreeIfNeeded()
+            self.keywordField.layoutSubtreeIfNeeded()
             self.keywordField.collapseSelectionToEnd()
+            self.revealLastKeywordTokenMinimally()
             self.updateKeywordRelationVisibility()
             self.updateIdleStatus()
             if searchAfterCommit { self.performSearch() }
@@ -1693,8 +1768,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func updateKeywordRelationVisibility() {
-        let keywordCount = currentKeywords.count
-        keywordRelationControl.isHidden = SearchPreferences.matchMode != .keywords || keywordCount < 2
+        let keywordCount = committedKeywordCount
+        keywordRelationControl.isHidden = SearchPreferences.matchMode != .keywords
+        keywordRelationControl.isEnabled = keywordCount >= 2
         addKeywordButton.isEnabled = keywordCount < KeywordSupport.inputLimit
     }
 
