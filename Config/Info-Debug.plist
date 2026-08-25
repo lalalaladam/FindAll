@@ -22,6 +22,12 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>FindAllBuildTime</key>
+	<string>$(FINDALL_BUILD_TIME)</string>
+	<key>FindAllGitCommit</key>
+	<string>$(FINDALL_GIT_COMMIT)</string>
+	<key>FindAllGitStatus</key>
+	<string>$(FINDALL_GIT_STATUS)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
