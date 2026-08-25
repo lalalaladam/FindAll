@@ -11,6 +11,7 @@ FindAll 是一款原生 macOS 文件搜索工具，使用 Spotlight 元数据快
 ### 主要功能
 
 - 按名称搜索，支持“包含”“开头匹配”和“完全匹配”三种模式。
+- 多关键词模式支持“全部”与“任一”匹配关系；按 Return 确认关键词，按 Command + Return 执行搜索。
 - 路径模式提供可滚动的多行输入框，可查看和编辑全部内容，并隐藏不适用的名称筛选条件；兼容换行、带引号和 QSpace 单行空格分隔格式，按 Command + Return 直接检索对应的文件、文件夹和应用程序。
 - 按文件夹、应用程序、视频、音频、图像、文档、PPT、Word、Excel、PDF 和压缩包筛选结果。
 - 支持智能排序及按名称、路径、类型、大小和修改日期排序。
@@ -41,6 +42,7 @@ FindAll is a native macOS file-search utility that uses Spotlight metadata to qu
 ### Features
 
 - Search by name with Contains, Starts With, and Exact matching modes.
+- Use multi-keyword search with All or Any matching; press Return to commit a keyword and Command-Return to search.
 - Use the scrollable multiline path editor to review and edit complete input while inapplicable name filters stay hidden; newline-separated, quoted, and QSpace-style space-separated paths can be resolved with Command-Return.
 - Filter results by folders, applications, videos, audio, images, documents, PPT, Word, Excel, PDF, and archives.
 - Use smart ordering or sort by name, path, kind, size, and modification date.

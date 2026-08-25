@@ -146,6 +146,27 @@ enum PathInputParser {
     }
 }
 
+enum KeywordSupport {
+    static let inputLimit = 20
+
+    static func normalized(_ values: [String], limit: Int = inputLimit) -> [String] {
+        var results: [String] = []
+        var seen = Set<String>()
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let comparisonKey = trimmed.folding(
+                options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                locale: nil
+            )
+            guard seen.insert(comparisonKey).inserted else { continue }
+            results.append(trimmed)
+            if results.count == limit { break }
+        }
+        return results
+    }
+}
+
 struct SearchResult: Hashable {
     let url: URL
     let displayName: String
@@ -235,6 +256,8 @@ struct SearchRequest: Equatable {
     let scopePath: String?
     let matchMode: SearchMatchMode
     let pathInputs: [String]?
+    let keywords: [String]?
+    let keywordRelation: KeywordMatchRelation
 }
 
 enum SearchFailure {
@@ -334,6 +357,25 @@ final class FileSearchService: NSObject {
             return
         }
 
+        if request.matchMode == .keywords {
+            let keywords = KeywordSupport.normalized(request.keywords ?? [])
+            guard !keywords.isEmpty else {
+                onUpdate?(.idle)
+                return
+            }
+            let normalizedRequest = SearchRequest(
+                text: keywords.joined(separator: "\u{1F}"),
+                category: request.category,
+                scopePath: request.scopePath,
+                matchMode: request.matchMode,
+                pathInputs: nil,
+                keywords: keywords,
+                keywordRelation: request.keywordRelation
+            )
+            startQuery(normalizedRequest, generation: currentGeneration)
+            return
+        }
+
         let trimmed = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             onUpdate?(.idle)
@@ -345,7 +387,9 @@ final class FileSearchService: NSObject {
             category: request.category,
             scopePath: request.scopePath,
             matchMode: request.matchMode,
-            pathInputs: nil
+            pathInputs: nil,
+            keywords: nil,
+            keywordRelation: request.keywordRelation
         )
         startQuery(normalizedRequest, generation: currentGeneration)
     }
@@ -511,6 +555,25 @@ final class FileSearchService: NSObject {
             namePredicate = NSPredicate(format: "%K BEGINSWITH[cd] %@", nameKey, request.text)
         case .exact:
             namePredicate = NSPredicate(format: "%K ==[cd] %@", nameKey, request.text)
+        case .keywords:
+            let predicates = (request.keywords ?? []).map {
+                NSPredicate(format: "%K CONTAINS[cd] %@", nameKey, $0)
+            }
+            switch predicates.count {
+            case 0:
+                namePredicate = NSPredicate(value: false)
+            case 1:
+                // NSMetadataQuery raises an Objective-C exception when asked to
+                // generate metadata syntax for a one-child compound predicate.
+                namePredicate = predicates[0]
+            default:
+                switch request.keywordRelation {
+                case .all:
+                    namePredicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+                case .any:
+                    namePredicate = NSCompoundPredicate(orPredicateWithSubpredicates: predicates)
+                }
+            }
         case .path:
             namePredicate = NSPredicate(value: false)
         }
@@ -574,6 +637,18 @@ final class FileSearchService: NSObject {
             return name.range(of: request.text, options: options.union(.anchored)) != nil
         case .exact:
             return name.compare(request.text, options: options) == .orderedSame
+        case .keywords:
+            let keywords = request.keywords ?? []
+            switch request.keywordRelation {
+            case .all:
+                return !keywords.isEmpty && keywords.allSatisfy {
+                    name.range(of: $0, options: options) != nil
+                }
+            case .any:
+                return keywords.contains {
+                    name.range(of: $0, options: options) != nil
+                }
+            }
         case .path:
             return false
         }
