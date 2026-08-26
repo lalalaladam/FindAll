@@ -59,19 +59,32 @@ final class ShelfStore {
 }
 
 final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation {
+    private enum PreferenceKey {
+        static let columnWidths = "shelf.table.fittedColumnWidths.v1"
+        static let columnReferenceWidth = "shelf.table.fittedColumnReferenceWidth.v1"
+        static let columnOrder = "shelf.table.columnOrder.v1"
+        static let keepOnTop = "shelf.window.keepOnTop.v1"
+        static let showOnAllSpaces = "shelf.window.showOnAllSpaces.v1"
+    }
+
     private let store: ShelfStore
     private let tableView = ShelfTableView()
     private let scrollView = NSScrollView()
-    private let emptyLabel = NSTextField(wrappingLabelWithString: L10n.string("Drag files and folders here"))
+    private let emptyStateView = ShelfEmptyStateView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let removeButton = NSButton()
     private let clearButton = NSButton()
+    private let keepOnTopSwitch = NSSwitch()
+    private let allSpacesSwitch = NSSwitch()
+    private let actionButtonStack = NSStackView()
     private var storeObserver: NSObjectProtocol?
     private var didRestoreFrame = false
+    private var hasRestoredColumnLayout = false
+    private var isAdjustingColumns = false
 
     init(store: ShelfStore) {
         self.store = store
-        let contentRect = NSRect(x: 0, y: 0, width: 560, height: 360)
+        let contentRect = NSRect(x: 0, y: 0, width: 720, height: 420)
         let panel = NSPanel(
             contentRect: contentRect,
             styleMask: [.titled, .closable, .resizable, .nonactivatingPanel],
@@ -84,14 +97,14 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
 
         panel.delegate = self
         panel.title = L10n.string("FindAll Shelf")
-        panel.minSize = NSSize(width: 420, height: 260)
+        panel.minSize = NSSize(width: 720, height: 420)
         panel.isReleasedWhenClosed = false
-        panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = false
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications]
         didRestoreFrame = panel.setFrameUsingName("FindAllShelfWindowFrame")
+        if didRestoreFrame {
+            normalizeRestoredFrame(of: panel)
+        }
         panel.setFrameAutosaveName("FindAllShelfWindowFrame")
 
         dropView.onDropURLs = { [weak self] urls in
@@ -100,9 +113,15 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
             if !added.isEmpty { self.select(urls: added) }
             return !added.isEmpty
         }
+        dropView.onDropHighlightChanged = { [weak self] isHighlighted in
+            self?.emptyStateView.setDropHighlighted(isHighlighted)
+        }
 
         buildInterface(in: dropView)
         configureTable()
+        restoreWindowBehavior()
+        dropView.layoutSubtreeIfNeeded()
+        layoutColumns(initialLayout: true)
         reloadStore()
         storeObserver = NotificationCenter.default.addObserver(
             forName: ShelfStore.didChangeNotification,
@@ -144,20 +163,6 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     }
 
     private func buildInterface(in content: NSView) {
-        let heading = NSTextField(labelWithString: L10n.string("Shelf"))
-        heading.font = .boldSystemFont(ofSize: 18)
-        heading.setAccessibilityRole(.staticText)
-
-        let hint = NSTextField(labelWithString: L10n.string("Temporary references; original files are never moved or deleted."))
-        hint.textColor = .secondaryLabelColor
-        hint.font = .systemFont(ofSize: 11)
-        hint.lineBreakMode = .byTruncatingTail
-
-        let titleStack = NSStackView(views: [heading, hint])
-        titleStack.orientation = .vertical
-        titleStack.alignment = .leading
-        titleStack.spacing = 2
-
         removeButton.title = L10n.string("Remove from Shelf")
         removeButton.target = self
         removeButton.action = #selector(removeSelection(_:))
@@ -173,48 +178,73 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         scrollView.autohidesScrollers = true
         scrollView.documentView = tableView
 
-        emptyLabel.alignment = .center
-        emptyLabel.textColor = .secondaryLabelColor
-        emptyLabel.font = .systemFont(ofSize: 15)
-        emptyLabel.maximumNumberOfLines = 2
-        emptyLabel.isSelectable = false
-        emptyLabel.setAccessibilityLabel(L10n.string("Drag files and folders here"))
-
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let buttonStack = NSStackView(views: [removeButton, clearButton])
-        buttonStack.orientation = .horizontal
-        buttonStack.spacing = 8
+        actionButtonStack.orientation = .horizontal
+        actionButtonStack.alignment = .centerY
+        actionButtonStack.spacing = 8
+        actionButtonStack.detachesHiddenViews = true
+        actionButtonStack.addArrangedSubview(removeButton)
+        actionButtonStack.addArrangedSubview(clearButton)
 
-        [titleStack, scrollView, emptyLabel, statusLabel, buttonStack].forEach {
+        keepOnTopSwitch.controlSize = .small
+        keepOnTopSwitch.target = self
+        keepOnTopSwitch.action = #selector(windowBehaviorChanged(_:))
+        allSpacesSwitch.controlSize = .small
+        allSpacesSwitch.target = self
+        allSpacesSwitch.action = #selector(windowBehaviorChanged(_:))
+
+        let keepOnTopControl = labeledSwitch(
+            title: L10n.string("Keep on top in current Space"),
+            control: keepOnTopSwitch
+        )
+        let allSpacesControl = labeledSwitch(
+            title: L10n.string("Show on all Spaces"),
+            control: allSpacesSwitch
+        )
+        let footerSpacer = NSView()
+        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        footerSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let footer = NSStackView(views: [statusLabel, footerSpacer, keepOnTopControl, allSpacesControl, actionButtonStack])
+        footer.orientation = .horizontal
+        footer.alignment = .centerY
+        footer.spacing = 10
+        footer.detachesHiddenViews = true
+
+        [scrollView, emptyStateView, footer].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview($0)
         }
 
         NSLayoutConstraint.activate([
-            titleStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
-            titleStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            titleStack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -16),
-
-            scrollView.topAnchor.constraint(equalTo: titleStack.bottomAnchor, constant: 12),
+            scrollView.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
             scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            scrollView.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -12),
+            scrollView.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -12),
 
-            emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
-            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 30),
-            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -30),
+            emptyStateView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            emptyStateView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            emptyStateView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            emptyStateView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
 
-            statusLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            statusLabel.centerYAnchor.constraint(equalTo: buttonStack.centerYAnchor),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: buttonStack.leadingAnchor, constant: -12),
-            statusLabel.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -14),
-
-            buttonStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            buttonStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10)
+            footer.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            footer.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            footer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10)
         ])
+    }
+
+    private func labeledSwitch(title: String, control: NSSwitch) -> NSStackView {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 12)
+        label.lineBreakMode = .byTruncatingTail
+        control.setAccessibilityLabel(title)
+        let stack = NSStackView(views: [label, control])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 6
+        return stack
     }
 
     private func configureTable() {
@@ -225,7 +255,10 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.rowHeight = 30
         tableView.style = .plain
-        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        tableView.intercellSpacing = NSSize(width: 0, height: tableView.intercellSpacing.height)
+        tableView.columnAutoresizingStyle = .noColumnAutoresizing
+        tableView.allowsColumnReordering = true
+        tableView.autoresizingMask = [.height]
         tableView.doubleAction = #selector(openSelection(_:))
         tableView.target = self
         tableView.setDraggingSourceOperationMask(.copy, forLocal: true)
@@ -235,16 +268,37 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         tableView.onReveal = { [weak self] in self?.revealSelection(nil) }
         tableView.onRemove = { [weak self] in self?.removeSelection(nil) }
 
+        let fittedHeaderView = FittedTableHeaderView()
+        fittedHeaderView.usesFittedResizing = { true }
+        fittedHeaderView.resizeDirections = { [weak self] dividerIndex in
+            self?.fittedResizeDirections(at: dividerIndex) ?? (false, false)
+        }
+        fittedHeaderView.onResizeWillBegin = { [weak self] in self?.isAdjustingColumns = true }
+        fittedHeaderView.onResize = { [weak self] dividerIndex, initialWidths, delta in
+            self?.resizeFittedColumns(at: dividerIndex, initialWidths: initialWidths, delta: delta)
+        }
+        fittedHeaderView.onResizeDidEnd = { [weak self] in
+            guard let self else { return }
+            self.isAdjustingColumns = false
+            self.saveFittedColumnLayout()
+        }
+        tableView.headerView = fittedHeaderView
+
         let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         nameColumn.title = L10n.string("Name")
         nameColumn.width = 210
         nameColumn.minWidth = 140
+        nameColumn.resizingMask = .userResizingMask
+        nameColumn.headerToolTip = nameColumn.title
         let locationColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("location"))
         locationColumn.title = L10n.string("Location")
         locationColumn.width = 310
         locationColumn.minWidth = 180
+        locationColumn.resizingMask = .userResizingMask
+        locationColumn.headerToolTip = locationColumn.title
         tableView.addTableColumn(nameColumn)
         tableView.addTableColumn(locationColumn)
+        restoreColumnOrder()
 
         let menu = NSMenu()
         addMenuItem(to: menu, title: L10n.string("Open"), action: #selector(openSelection(_:)))
@@ -260,6 +314,227 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         item.target = self
     }
 
+    private func layoutColumns(initialLayout: Bool = false) {
+        guard !isAdjustingColumns, !tableView.tableColumns.isEmpty else { return }
+        scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
+        scrollView.hasHorizontalScroller = false
+        scrollView.tile()
+        let targetWidth = fittedColumnLayoutWidth
+        guard targetWidth > 0 else { return }
+
+        isAdjustingColumns = true
+        if initialLayout, !hasRestoredColumnLayout {
+            restoreFittedColumnLayout(to: targetWidth)
+            hasRestoredColumnLayout = true
+        } else {
+            fitColumns(to: targetWidth)
+        }
+        var frame = tableView.frame
+        frame.size.width = targetWidth
+        tableView.frame = frame
+        isAdjustingColumns = false
+
+        if scrollView.contentView.bounds.origin.x != 0 {
+            var origin = scrollView.contentView.bounds.origin
+            origin.x = 0
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        refreshColumnResizeCursorRects()
+    }
+
+    private var fittedColumnLayoutWidth: CGFloat {
+        let insets = scrollView.contentInsets
+        let viewportWidth = floor(scrollView.bounds.width - insets.left - insets.right)
+        guard scrollView.hasVerticalScroller else { return max(0, viewportWidth) }
+        let reservedWidth = NSScroller.scrollerWidth(
+            for: .regular,
+            scrollerStyle: scrollView.scrollerStyle
+        ) + 4
+        return max(0, viewportWidth - reservedWidth)
+    }
+
+    private func fitColumns(to targetWidth: CGFloat) {
+        applyColumnWidths(adaptedColumnWidths(to: targetWidth, from: tableView.tableColumns.map(\.width)))
+    }
+
+    private func adaptedColumnWidths(to targetWidth: CGFloat, from sourceWidths: [CGFloat]) -> [CGFloat] {
+        let columns = tableView.tableColumns
+        guard sourceWidths.count == columns.count, !columns.isEmpty else { return sourceWidths }
+        let minimumWidth = columns.reduce(CGFloat.zero) { $0 + $1.minWidth }
+        let availableFlexibleWidth = max(0, targetWidth - minimumWidth)
+        let sourceFlexibleWidths = zip(columns, sourceWidths).map { column, width in
+            max(0, width - column.minWidth)
+        }
+        let totalSourceFlexibleWidth = sourceFlexibleWidths.reduce(0, +)
+        let weights: [CGFloat]
+        if totalSourceFlexibleWidth > 0.5 {
+            weights = sourceFlexibleWidths.map { $0 / totalSourceFlexibleWidth }
+        } else {
+            weights = Array(repeating: 1 / CGFloat(columns.count), count: columns.count)
+        }
+
+        var remainingFlexibleWidth = availableFlexibleWidth
+        return columns.indices.map { index in
+            let addition: CGFloat
+            if index == columns.count - 1 {
+                addition = remainingFlexibleWidth
+            } else {
+                addition = availableFlexibleWidth * weights[index]
+                remainingFlexibleWidth -= addition
+            }
+            return columns[index].minWidth + max(0, addition)
+        }
+    }
+
+    private func resizeFittedColumns(at dividerIndex: Int, initialWidths: [CGFloat], delta: CGFloat) {
+        let columns = tableView.tableColumns
+        guard columns.indices.contains(dividerIndex),
+              columns.indices.contains(dividerIndex + 1),
+              initialWidths.count == columns.count else { return }
+
+        let leftCapacity = max(0, initialWidths[dividerIndex] - columns[dividerIndex].minWidth)
+        let rightCapacity = max(0, initialWidths[dividerIndex + 1] - columns[dividerIndex + 1].minWidth)
+        let adjustment = min(max(delta, -leftCapacity), rightCapacity)
+        var widths = initialWidths
+        widths[dividerIndex] = initialWidths[dividerIndex] + adjustment
+        widths[dividerIndex + 1] = initialWidths[dividerIndex + 1] - adjustment
+        applyColumnWidths(widths)
+        tableView.needsDisplay = true
+        tableView.headerView?.needsDisplay = true
+        refreshColumnResizeCursorRects()
+    }
+
+    private func fittedResizeDirections(at dividerIndex: Int) -> (left: Bool, right: Bool) {
+        let columns = tableView.tableColumns
+        guard columns.indices.contains(dividerIndex), dividerIndex + 1 < columns.count else {
+            return (false, false)
+        }
+        return (
+            left: columns[dividerIndex].width - columns[dividerIndex].minWidth > 0.5,
+            right: columns[dividerIndex + 1].width - columns[dividerIndex + 1].minWidth > 0.5
+        )
+    }
+
+    private func refreshColumnResizeCursorRects() {
+        guard let headerView = tableView.headerView, let window = headerView.window else { return }
+        window.invalidateCursorRects(for: headerView)
+    }
+
+    private func restoreFittedColumnLayout(to targetWidth: CGFloat) {
+        guard let savedWidths = UserDefaults.standard.dictionary(
+            forKey: PreferenceKey.columnWidths
+        ) as? [String: Double] else {
+            fitColumns(to: targetWidth)
+            return
+        }
+
+        let columns = tableView.tableColumns
+        let widths = columns.map { column -> CGFloat in
+            guard let savedWidth = savedWidths[column.identifier.rawValue], savedWidth.isFinite else {
+                return column.width
+            }
+            return max(column.minWidth, CGFloat(savedWidth))
+        }
+        let storedReferenceWidth = UserDefaults.standard.object(forKey: PreferenceKey.columnReferenceWidth) == nil
+            ? widths.reduce(0, +)
+            : CGFloat(UserDefaults.standard.double(forKey: PreferenceKey.columnReferenceWidth))
+        let referenceWidth = storedReferenceWidth.isFinite && storedReferenceWidth > 0
+            ? storedReferenceWidth
+            : widths.reduce(0, +)
+
+        if abs(referenceWidth - targetWidth) <= 0.5 {
+            applyColumnWidths(widths)
+            fitColumns(to: targetWidth)
+        } else {
+            applyColumnWidths(adaptedColumnWidths(to: targetWidth, from: widths))
+        }
+    }
+
+    private func applyColumnWidths(_ widths: [CGFloat]) {
+        for (column, width) in zip(tableView.tableColumns, widths) where width.isFinite {
+            column.width = max(column.minWidth, width)
+        }
+    }
+
+    private func saveFittedColumnLayout() {
+        guard !tableView.tableColumns.isEmpty else { return }
+        let widths = Dictionary(uniqueKeysWithValues: tableView.tableColumns.map {
+            ($0.identifier.rawValue, Double($0.width))
+        })
+        UserDefaults.standard.set(widths, forKey: PreferenceKey.columnWidths)
+        let referenceWidth = fittedColumnLayoutWidth > 0
+            ? fittedColumnLayoutWidth
+            : tableView.tableColumns.reduce(0) { $0 + $1.width }
+        UserDefaults.standard.set(Double(referenceWidth), forKey: PreferenceKey.columnReferenceWidth)
+    }
+
+    private func restoreColumnOrder() {
+        guard let savedOrder = UserDefaults.standard.stringArray(forKey: PreferenceKey.columnOrder) else { return }
+        let validOrder = savedOrder.filter { identifier in
+            tableView.tableColumns.contains { $0.identifier.rawValue == identifier }
+        }
+        for (targetIndex, identifier) in validOrder.enumerated() {
+            let currentIndex = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier(identifier))
+            if currentIndex >= 0, currentIndex != targetIndex {
+                tableView.moveColumn(currentIndex, toColumn: targetIndex)
+            }
+        }
+    }
+
+    private func saveColumnOrder() {
+        UserDefaults.standard.set(
+            tableView.tableColumns.map(\.identifier.rawValue),
+            forKey: PreferenceKey.columnOrder
+        )
+    }
+
+    private func restoreWindowBehavior() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: PreferenceKey.keepOnTop) == nil {
+            defaults.set(WindowPreferences.keepOnTop, forKey: PreferenceKey.keepOnTop)
+        }
+        if defaults.object(forKey: PreferenceKey.showOnAllSpaces) == nil {
+            defaults.set(WindowPreferences.showOnAllSpaces, forKey: PreferenceKey.showOnAllSpaces)
+        }
+        keepOnTopSwitch.state = defaults.bool(forKey: PreferenceKey.keepOnTop) ? .on : .off
+        allSpacesSwitch.state = defaults.bool(forKey: PreferenceKey.showOnAllSpaces) ? .on : .off
+        applyWindowBehavior()
+    }
+
+    @objc private func windowBehaviorChanged(_ sender: NSSwitch) {
+        if sender === keepOnTopSwitch {
+            UserDefaults.standard.set(sender.state == .on, forKey: PreferenceKey.keepOnTop)
+        } else if sender === allSpacesSwitch {
+            UserDefaults.standard.set(sender.state == .on, forKey: PreferenceKey.showOnAllSpaces)
+        }
+        applyWindowBehavior()
+    }
+
+    private func applyWindowBehavior() {
+        guard let window else { return }
+        let keepOnTop = keepOnTopSwitch.state == .on
+        (window as? NSPanel)?.isFloatingPanel = keepOnTop
+        window.level = keepOnTop ? .floating : .normal
+        var behavior = window.collectionBehavior
+        behavior.remove([.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications])
+        if allSpacesSwitch.state == .on {
+            behavior.insert([.canJoinAllSpaces, .canJoinAllApplications])
+        }
+        window.collectionBehavior = behavior
+    }
+
+    private func normalizeRestoredFrame(of window: NSWindow) {
+        var frame = window.frame
+        frame.size.width = max(frame.width, window.minSize.width)
+        frame.size.height = max(frame.height, window.minSize.height)
+        let screen = NSScreen.screens.first { $0.frame.intersects(frame) } ?? NSScreen.main
+        if let screen {
+            frame = window.constrainFrameRect(frame, to: screen)
+        }
+        window.setFrame(frame, display: false)
+    }
+
     private func reloadStore() {
         let selectedPaths = Set(selectedURLs.map { $0.standardizedFileURL.path })
         tableView.reloadData()
@@ -267,9 +542,14 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
             selectedPaths.contains(store.urls[$0].standardizedFileURL.path)
         })
         tableView.selectRowIndexes(selection, byExtendingSelection: false)
-        emptyLabel.isHidden = !store.urls.isEmpty
+        let isEmpty = store.urls.isEmpty
+        scrollView.isHidden = isEmpty
+        emptyStateView.isHidden = !isEmpty
+        statusLabel.isHidden = isEmpty
+        actionButtonStack.isHidden = isEmpty
         statusLabel.stringValue = String.localizedStringWithFormat(L10n.string("%lld items"), Int64(store.urls.count))
         updateActionAvailability()
+        layoutColumns()
         QLPreviewPanel.shared()?.reloadData()
     }
 
@@ -296,6 +576,32 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateActionAvailability()
+    }
+
+    func tableViewColumnDidResize(_ notification: Notification) {
+        guard !isAdjustingColumns else { return }
+        layoutColumns()
+        saveFittedColumnLayout()
+    }
+
+    func tableViewColumnDidMove(_ notification: Notification) {
+        guard !isAdjustingColumns else { return }
+        saveColumnOrder()
+        layoutColumns()
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        layoutColumns()
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        layoutColumns()
+        saveFittedColumnLayout()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        saveFittedColumnLayout()
+        saveColumnOrder()
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
@@ -431,12 +737,97 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     }
 }
 
+private final class ShelfEmptyStateView: NSView {
+    private var isDropHighlighted = false
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+
+        let imageView = NSImageView()
+        imageView.image = NSImage(
+            systemSymbolName: "tray.and.arrow.down",
+            accessibilityDescription: L10n.string("Drag files and folders here")
+        )
+        imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 32, weight: .regular)
+        imageView.contentTintColor = .secondaryLabelColor
+        imageView.imageScaling = .scaleProportionallyDown
+        imageView.setAccessibilityLabel(L10n.string("Drag files and folders here"))
+
+        let titleLabel = NSTextField(labelWithString: L10n.string("Drag files and folders here"))
+        titleLabel.alignment = .center
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+
+        let addHintLabel = NSTextField(
+            wrappingLabelWithString: L10n.string("You can also add items from Finder's context menu or use the Shelf shortcut.")
+        )
+        addHintLabel.alignment = .center
+        addHintLabel.textColor = .secondaryLabelColor
+        addHintLabel.font = .systemFont(ofSize: 12)
+        addHintLabel.maximumNumberOfLines = 2
+
+        let safetyLabel = NSTextField(
+            wrappingLabelWithString: L10n.string("Temporary references; original files are never moved or deleted.")
+        )
+        safetyLabel.alignment = .center
+        safetyLabel.textColor = .tertiaryLabelColor
+        safetyLabel.font = .systemFont(ofSize: 11)
+        safetyLabel.maximumNumberOfLines = 2
+
+        let textStack = NSStackView(views: [titleLabel, addHintLabel, safetyLabel])
+        textStack.orientation = .vertical
+        textStack.alignment = .centerX
+        textStack.spacing = 6
+        let stack = NSStackView(views: [imageView, textStack])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 14
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            imageView.widthAnchor.constraint(equalToConstant: 38),
+            imageView.heightAnchor.constraint(equalToConstant: 38),
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 36),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -36),
+            addHintLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 460),
+            safetyLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 460)
+        ])
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel(L10n.string("Drag files and folders here"))
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func setDropHighlighted(_ highlighted: Bool) {
+        guard highlighted != isDropHighlighted else { return }
+        isDropHighlighted = highlighted
+        needsDisplay = true
+    }
+
+    override func updateLayer() {
+        layer?.cornerRadius = 12
+        layer?.borderWidth = isDropHighlighted ? 2 : 1
+        layer?.borderColor = (isDropHighlighted ? NSColor.controlAccentColor : NSColor.separatorColor).cgColor
+        let opacity: CGFloat = isDropHighlighted ? 0.72 : 0.32
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(opacity).cgColor
+    }
+}
+
 private final class ShelfDropView: NSView {
     var onDropURLs: (([URL]) -> Bool)?
+    var onDropHighlightChanged: ((Bool) -> Void)?
     private var isDropHighlighted = false {
         didSet {
             layer?.borderWidth = isDropHighlighted ? 3 : 0
             layer?.borderColor = NSColor.controlAccentColor.cgColor
+            onDropHighlightChanged?(isDropHighlighted)
         }
     }
 
