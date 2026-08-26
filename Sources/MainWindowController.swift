@@ -3,6 +3,7 @@ import QuickLookUI
 
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTokenFieldDelegate, NSTextViewDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation, NSMenuDelegate {
     var onShowFolderContents: ((URL, NSWindow?) -> Void)?
+    var onAddToShelf: (([URL]) -> Void)?
 
     private let searchField = NSSearchField()
     private let keywordField = KeywordTokenField()
@@ -716,6 +717,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         tableView.onGetInfo = { [weak self] in self?.showFinderInfo(nil) }
         tableView.onCopyPath = { [weak self] in self?.copyPath(nil) }
         tableView.onCopyFiles = { [weak self] in self?.copySelection(nil) }
+        tableView.onAddToShelf = { [weak self] in self?.addSelectionToShelf(nil) }
         tableView.setDraggingSourceOperationMask(.copy, forLocal: true)
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
 
@@ -780,6 +782,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let copyPath = menu.addItem(withTitle: L10n.string("Copy Path"), action: #selector(copyPath(_:)), keyEquivalent: "")
         copyPath.identifier = NSUserInterfaceItemIdentifier("command.copyPath")
         copyPath.target = self
+        let addToShelf = menu.addItem(withTitle: L10n.string("Add to Shelf"), action: #selector(addSelectionToShelf(_:)), keyEquivalent: "")
+        addToShelf.identifier = NSUserInterfaceItemIdentifier("command.addToShelf")
+        addToShelf.target = self
         tableView.menu = menu
         refreshContextMenuShortcuts()
     }
@@ -2129,6 +2134,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         NSPasteboard.general.writeObjects(urls)
     }
 
+    @objc func addSelectionToShelf(_ sender: Any?) {
+        guard !selectedURLs.isEmpty else { return }
+        onAddToShelf?(selectedURLs)
+    }
+
     @objc func toggleQuickLook(_ sender: Any?) {
         guard !selectedURLs.isEmpty else { return }
         if let panel = QLPreviewPanel.shared(), panel.isVisible {
@@ -2154,7 +2164,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         if menuItem.action == #selector(showFolderContents(_:)) {
             return selectedFolderURLForContents != nil
         }
-        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(showFinderInfo(_:)), #selector(shareSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
+        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(showFinderInfo(_:)), #selector(shareSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(addSelectionToShelf(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
             return !selectedURLs.isEmpty
         }
         return true
@@ -2537,6 +2547,7 @@ private final class ActionTableView: NSTableView {
     var onGetInfo: (() -> Void)?
     var onCopyPath: (() -> Void)?
     var onCopyFiles: (() -> Void)?
+    var onAddToShelf: (() -> Void)?
     private(set) var contextMenuAnchorPoint: NSPoint?
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -2562,6 +2573,8 @@ private final class ActionTableView: NSTableView {
             onCopyFiles?()
         } else if ShortcutSettings.shortcut(for: .copyPath).matches(event) {
             onCopyPath?()
+        } else if ShortcutSettings.shortcut(for: .addToShelf).matches(event) {
+            onAddToShelf?()
         } else if ShortcutSettings.shortcut(for: .share).matches(event) {
             onShare?()
         } else if ShortcutSettings.shortcut(for: .getInfo).matches(event) {

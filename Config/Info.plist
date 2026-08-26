@@ -30,6 +30,24 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Add to FindAll Shelf</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>addToShelf</string>
+			<key>NSPortName</key>
+			<string>FindAll</string>
+			<key>NSSendFileTypes</key>
+			<array>
+				<string>public.item</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>FindAll uses Finder automation only to open information windows for selected search results.</string>
 	<key>NSPrincipalClass</key>

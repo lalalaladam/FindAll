@@ -276,3 +276,15 @@
 "Double-clicking a folder opens it in the selected file manager. Showing an item opens its parent and selects it in Finder or QSpace; unsupported file managers open the parent folder." = "双击文件夹会在所选文件管理器中进入该文件夹。“在文件管理器中显示”会在访达或 QSpace 中打开上一级目录并选中目标；不支持选中功能的文件管理器只会打开上一级目录。";
 "Double-clicking a folder opens it in the selected file manager. Showing an item selects it in Finder or QSpace when QSpace is the system file viewer; unsupported file managers open the parent folder." = "双击文件夹会在所选文件管理器中进入该文件夹。使用访达，或 QSpace 已设为系统文件查看器时，“在文件管理器中显示”会选中目标；其他文件管理器只会打开上一级目录。";
 "Zoom" = "缩放";
+"Add selected items to Shelf" = "将所选项目加入中介板";
+"Add to Shelf" = "加入中介板";
+"Clear Shelf" = "清空中介板";
+"Drag files and folders here" = "将文件和文件夹拖到这里";
+"FindAll Shelf" = "FindAll 中介板";
+"FindAll did not receive any file or folder URLs." = "FindAll 没有收到文件或文件夹地址。";
+"Location" = "位置";
+"Remove from Shelf" = "从中介板移除";
+"Shelf" = "中介板";
+"Show Shelf" = "显示中介板";
+"Show or hide Shelf" = "显示或隐藏中介板";
+"Temporary references; original files are never moved or deleted." = "仅临时引用；不会移动或删除原始文件。";
