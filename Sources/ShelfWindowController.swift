@@ -77,7 +77,10 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     private let keepOnTopSwitch = NSSwitch()
     private let allSpacesSwitch = NSSwitch()
     private let actionButtonStack = NSStackView()
+    private let metadataQueue = DispatchQueue(label: "com.lalalaladam.FindAll.shelf-metadata", qos: .userInitiated)
     private var storeObserver: NSObjectProtocol?
+    private var metadataByPath: [String: SearchResult] = [:]
+    private var metadataLoadGeneration = 0
     private var didRestoreFrame = false
     private var hasRestoredColumnLayout = false
     private var isAdjustingColumns = false
@@ -284,20 +287,11 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         }
         tableView.headerView = fittedHeaderView
 
-        let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-        nameColumn.title = L10n.string("Name")
-        nameColumn.width = 210
-        nameColumn.minWidth = 140
-        nameColumn.resizingMask = .userResizingMask
-        nameColumn.headerToolTip = nameColumn.title
-        let locationColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("location"))
-        locationColumn.title = L10n.string("Location")
-        locationColumn.width = 310
-        locationColumn.minWidth = 180
-        locationColumn.resizingMask = .userResizingMask
-        locationColumn.headerToolTip = locationColumn.title
-        tableView.addTableColumn(nameColumn)
-        tableView.addTableColumn(locationColumn)
+        addColumn("name", title: L10n.string("Name"), width: 210, minimum: 140)
+        addColumn("location", title: L10n.string("Location"), width: 310, minimum: 180)
+        addColumn("kind", title: L10n.string("Kind"), width: 120, minimum: 70)
+        addColumn("size", title: L10n.string("Size"), width: 85, minimum: 70)
+        addColumn("modified", title: L10n.string("Modified"), width: 145, minimum: 115)
         restoreColumnOrder()
 
         let menu = NSMenu()
@@ -307,6 +301,16 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         menu.addItem(.separator())
         addMenuItem(to: menu, title: L10n.string("Remove from Shelf"), action: #selector(removeSelection(_:)))
         tableView.menu = menu
+    }
+
+    private func addColumn(_ identifier: String, title: String, width: CGFloat, minimum: CGFloat) {
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(identifier))
+        column.title = title
+        column.width = width
+        column.minWidth = minimum
+        column.resizingMask = .userResizingMask
+        column.headerToolTip = title
+        tableView.addTableColumn(column)
     }
 
     private func addMenuItem(to menu: NSMenu, title: String, action: Selector) {
@@ -355,7 +359,50 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     }
 
     private func fitColumns(to targetWidth: CGFloat) {
-        applyColumnWidths(adaptedColumnWidths(to: targetWidth, from: tableView.tableColumns.map(\.width)))
+        var difference = targetWidth - tableView.tableColumns.reduce(0) { $0 + $1.width }
+        guard abs(difference) > 0.5 else { return }
+        if difference > 0 {
+            let growthColumns = ["name", "location"].compactMap {
+                tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier($0))
+            }
+            let recipients = growthColumns.isEmpty ? tableView.tableColumns : growthColumns
+            let totalWidth = recipients.reduce(0) { $0 + $1.width }
+            guard !recipients.isEmpty else { return }
+            for (index, column) in recipients.enumerated() {
+                let addition = index == recipients.count - 1
+                    ? difference
+                    : difference * column.width / max(totalWidth, 1)
+                column.width += addition
+                difference -= addition
+            }
+            return
+        }
+
+        var requiredReduction = -difference
+        for identifiers in [["location"], ["kind", "size"], ["name", "modified"]] {
+            let columns = identifiers.compactMap {
+                tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier($0))
+            }
+            requiredReduction -= shrink(columns, by: requiredReduction)
+            if requiredReduction <= 0.5 { return }
+        }
+    }
+
+    private func shrink(_ columns: [NSTableColumn], by requestedReduction: CGFloat) -> CGFloat {
+        guard requestedReduction > 0.5 else { return 0 }
+        let capacities = columns.map { max(0, $0.width - $0.minWidth) }
+        let totalCapacity = capacities.reduce(0, +)
+        guard totalCapacity > 0 else { return 0 }
+        let actualReduction = min(requestedReduction, totalCapacity)
+        var remainingReduction = actualReduction
+        for (index, column) in columns.enumerated() {
+            let reduction = index == columns.count - 1
+                ? min(capacities[index], remainingReduction)
+                : min(capacities[index], actualReduction * capacities[index] / totalCapacity)
+            column.width -= reduction
+            remainingReduction -= reduction
+        }
+        return actualReduction - max(0, remainingReduction)
     }
 
     private func adaptedColumnWidths(to targetWidth: CGFloat, from sourceWidths: [CGFloat]) -> [CGFloat] {
@@ -393,12 +440,24 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
               columns.indices.contains(dividerIndex + 1),
               initialWidths.count == columns.count else { return }
 
-        let leftCapacity = max(0, initialWidths[dividerIndex] - columns[dividerIndex].minWidth)
-        let rightCapacity = max(0, initialWidths[dividerIndex + 1] - columns[dividerIndex + 1].minWidth)
-        let adjustment = min(max(delta, -leftCapacity), rightCapacity)
         var widths = initialWidths
-        widths[dividerIndex] = initialWidths[dividerIndex] + adjustment
-        widths[dividerIndex + 1] = initialWidths[dividerIndex + 1] - adjustment
+        if delta >= 0 {
+            let adjustment = shrinkFittedWidths(
+                &widths,
+                columns: columns,
+                candidateIndices: Array(columns.indices.dropFirst(dividerIndex + 1)),
+                by: delta
+            )
+            widths[dividerIndex] = initialWidths[dividerIndex] + adjustment
+        } else {
+            let adjustment = shrinkFittedWidths(
+                &widths,
+                columns: columns,
+                candidateIndices: Array(columns.indices.prefix(dividerIndex + 1)),
+                by: -delta
+            )
+            widths[dividerIndex + 1] = initialWidths[dividerIndex + 1] + adjustment
+        }
         applyColumnWidths(widths)
         tableView.needsDisplay = true
         tableView.headerView?.needsDisplay = true
@@ -410,10 +469,41 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         guard columns.indices.contains(dividerIndex), dividerIndex + 1 < columns.count else {
             return (false, false)
         }
-        return (
-            left: columns[dividerIndex].width - columns[dividerIndex].minWidth > 0.5,
-            right: columns[dividerIndex + 1].width - columns[dividerIndex + 1].minWidth > 0.5
-        )
+        let canMoveLeft = columns.indices.prefix(dividerIndex + 1).contains { index in
+            columns[index].width - columns[index].minWidth > 0.5
+        }
+        let canMoveRight = columns.indices.dropFirst(dividerIndex + 1).contains { index in
+            columns[index].width - columns[index].minWidth > 0.5
+        }
+        return (canMoveLeft, canMoveRight)
+    }
+
+    private func shrinkFittedWidths(
+        _ widths: inout [CGFloat],
+        columns: [NSTableColumn],
+        candidateIndices: [Int],
+        by requestedReduction: CGFloat
+    ) -> CGFloat {
+        var remainingReduction = requestedReduction
+        for identifiers in [["location"], ["kind", "size"], ["name", "modified"]]
+        where remainingReduction > 0.5 {
+            let indices = candidateIndices.filter { identifiers.contains(columns[$0].identifier.rawValue) }
+            let capacities = indices.map { max(0, widths[$0] - columns[$0].minWidth) }
+            let totalCapacity = capacities.reduce(0, +)
+            guard totalCapacity > 0 else { continue }
+
+            let groupReduction = min(remainingReduction, totalCapacity)
+            var unallocatedReduction = groupReduction
+            for (offset, index) in indices.enumerated() {
+                let reduction = offset == indices.count - 1
+                    ? min(capacities[offset], unallocatedReduction)
+                    : min(capacities[offset], groupReduction * capacities[offset] / totalCapacity)
+                widths[index] -= reduction
+                unallocatedReduction -= reduction
+            }
+            remainingReduction -= groupReduction - max(0, unallocatedReduction)
+        }
+        return requestedReduction - max(0, remainingReduction)
     }
 
     private func refreshColumnResizeCursorRects() {
@@ -537,6 +627,8 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
 
     private func reloadStore() {
         let selectedPaths = Set(selectedURLs.map { $0.standardizedFileURL.path })
+        let currentPaths = Set(store.urls.map { $0.standardizedFileURL.path })
+        metadataByPath = metadataByPath.filter { currentPaths.contains($0.key) }
         tableView.reloadData()
         let selection = IndexSet(store.urls.indices.filter {
             selectedPaths.contains(store.urls[$0].standardizedFileURL.path)
@@ -550,7 +642,39 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         statusLabel.stringValue = String.localizedStringWithFormat(L10n.string("%lld items"), Int64(store.urls.count))
         updateActionAvailability()
         layoutColumns()
+        loadMissingMetadata()
         QLPreviewPanel.shared()?.reloadData()
+    }
+
+    private func loadMissingMetadata() {
+        let urls = store.urls.filter { metadataByPath[$0.standardizedFileURL.path] == nil }
+        guard !urls.isEmpty else { return }
+        metadataLoadGeneration += 1
+        let generation = metadataLoadGeneration
+        metadataQueue.async { [weak self] in
+            var loaded: [String: SearchResult] = [:]
+            loaded.reserveCapacity(urls.count)
+            for url in urls {
+                if case let .success(result) = SearchResult.load(from: url) {
+                    loaded[url.standardizedFileURL.path] = result
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self, generation == self.metadataLoadGeneration else { return }
+                let currentPaths = Set(self.store.urls.map { $0.standardizedFileURL.path })
+                for (path, result) in loaded where currentPaths.contains(path) {
+                    self.metadataByPath[path] = result
+                }
+                let rows = IndexSet(self.store.urls.indices.filter {
+                    loaded[self.store.urls[$0].standardizedFileURL.path] != nil
+                })
+                guard !rows.isEmpty else { return }
+                self.tableView.reloadData(
+                    forRowIndexes: rows,
+                    columnIndexes: IndexSet(self.tableView.tableColumns.indices)
+                )
+            }
+        }
     }
 
     private func select(urls: [URL]) {
@@ -615,15 +739,37 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         let identifier = tableColumn.identifier
         let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView)
             ?? makeCell(identifier: identifier)
-        if identifier.rawValue == "name" {
-            cell.textField?.stringValue = FileManager.default.displayName(atPath: url.path)
+        let metadata = metadataByPath[url.standardizedFileURL.path]
+        let displayText: String
+        switch identifier.rawValue {
+        case "name":
+            displayText = metadata?.displayName ?? FileManager.default.displayName(atPath: url.path)
             cell.imageView?.image = NSWorkspace.shared.icon(forFile: url.path)
-        } else {
-            cell.textField?.stringValue = url.deletingLastPathComponent().path
+        case "location":
+            displayText = url.deletingLastPathComponent().path
+        case "kind":
+            displayText = metadata.map { Self.singleLineDisplayText($0.kind) } ?? "—"
+        case "size":
+            displayText = metadata?.size.map {
+                ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
+            } ?? "—"
+        case "modified":
+            displayText = metadata?.modifiedAt.map(Self.dateFormatter.string(from:)) ?? "—"
+        default:
+            displayText = "—"
         }
-        cell.toolTip = url.path
-        cell.textField?.toolTip = url.path
+        cell.textField?.stringValue = displayText
+        let toolTip = identifier.rawValue == "kind" && metadata?.fullKind.isEmpty == false
+            ? metadata?.fullKind
+            : identifier.rawValue == "name" || identifier.rawValue == "location" ? url.path : displayText
+        cell.toolTip = toolTip
+        cell.textField?.toolTip = toolTip
         return cell
+    }
+
+    private static func singleLineDisplayText(_ value: String) -> String {
+        let normalized = value.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return normalized.isEmpty ? "—" : normalized
     }
 
     private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
@@ -632,7 +778,12 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         let text = NSTextField(labelWithString: "")
         text.translatesAutoresizingMaskIntoConstraints = false
         text.maximumNumberOfLines = 1
+        text.cell?.usesSingleLineMode = true
         text.lineBreakMode = .byTruncatingMiddle
+        if identifier.rawValue == "modified" {
+            text.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            text.alignment = .right
+        }
         cell.textField = text
         cell.addSubview(text)
 
@@ -735,6 +886,13 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         )
         window.setFrameOrigin(origin)
     }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
 }
 
 private final class ShelfEmptyStateView: NSView {
