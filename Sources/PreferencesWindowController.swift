@@ -4,36 +4,44 @@ import UniformTypeIdentifiers
 
 enum CommandID: String, CaseIterable {
     case globalToggle
+    case shelfToggle
     case open
     case showFolderContents
     case quickLook
     case reveal
     case copyFiles
     case copyPath
+    case addToShelf
     case share
     case getInfo
 
+    static let globalCommands: [CommandID] = [.globalToggle, .shelfToggle]
+
     static let resultListCommands: [CommandID] = [
-        .open, .showFolderContents, .quickLook, .reveal, .copyFiles, .copyPath, .share, .getInfo
+        .open, .showFolderContents, .quickLook, .reveal, .copyFiles, .copyPath, .addToShelf, .share, .getInfo
     ]
 
     var title: String {
         switch self {
         case .globalToggle: return L10n.string("Show or hide FindAll")
+        case .shelfToggle: return L10n.string("Show or hide Shelf")
         case .open: return L10n.string("Open selected items")
         case .showFolderContents: return L10n.string("Show Folder Contents in New Window")
         case .quickLook: return L10n.string("Quick Look")
         case .reveal: return L10n.string("Show in File Manager")
         case .copyFiles: return L10n.string("Copy Files")
         case .copyPath: return L10n.string("Copy full paths")
+        case .addToShelf: return L10n.string("Add selected items to Shelf")
         case .share: return L10n.string("Share")
         case .getInfo: return L10n.string("Get Info")
         }
     }
 
     var scopeTitle: String {
-        self == .globalToggle ? L10n.string("Global") : L10n.string("Result list")
+        isGlobal ? L10n.string("Global") : L10n.string("Result list")
     }
+
+    var isGlobal: Bool { Self.globalCommands.contains(self) }
 }
 
 struct KeyboardShortcut: Codable, Equatable {
@@ -104,12 +112,14 @@ struct KeyboardShortcut: Codable, Equatable {
 enum ShortcutSettings {
     private static let defaults: [CommandID: KeyboardShortcut] = [
         .globalToggle: KeyboardShortcut(keyCode: 49, modifiersRawValue: NSEvent.ModifierFlags.option.rawValue, characters: " "),
+        .shelfToggle: KeyboardShortcut(keyCode: 49, modifiersRawValue: NSEvent.ModifierFlags.control.rawValue, characters: " "),
         .open: KeyboardShortcut(keyCode: 36, modifiersRawValue: 0, characters: "\r"),
         .showFolderContents: KeyboardShortcut(keyCode: 125, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "\u{F701}"),
         .quickLook: KeyboardShortcut(keyCode: 49, modifiersRawValue: 0, characters: " "),
         .reveal: KeyboardShortcut(keyCode: 36, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "\r"),
         .copyFiles: KeyboardShortcut(keyCode: 8, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "c"),
         .copyPath: KeyboardShortcut(keyCode: 8, modifiersRawValue: NSEvent.ModifierFlags.command.union(.shift).rawValue, characters: "c"),
+        .addToShelf: KeyboardShortcut(keyCode: 0, modifiersRawValue: NSEvent.ModifierFlags.command.union(.shift).rawValue, characters: "a"),
         .share: KeyboardShortcut(keyCode: 1, modifiersRawValue: NSEvent.ModifierFlags.command.union(.option).union(.control).rawValue, characters: "s"),
         .getInfo: KeyboardShortcut(keyCode: 34, modifiersRawValue: NSEvent.ModifierFlags.command.rawValue, characters: "i")
     ]
@@ -580,7 +590,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
         let globalHeading = NSTextField(labelWithString: L10n.string("Available in Any Application"))
         globalHeading.font = .boldSystemFont(ofSize: 14)
-        let globalRows = makeShortcutRows(commands: [.globalToggle])
+        let globalRows = makeShortcutRows(commands: CommandID.globalCommands)
         let resultsHeading = NSTextField(labelWithString: L10n.string("FindAll File Lists"))
         resultsHeading.font = .boldSystemFont(ofSize: 14)
         let resultsHelp = NSTextField(wrappingLabelWithString: L10n.string("These shortcuts work when a FindAll file list has keyboard focus and an item is selected."))
@@ -1170,7 +1180,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     private func save(_ shortcut: KeyboardShortcut, for command: CommandID) {
-        if command == .globalToggle && shortcut.modifiers.isEmpty {
+        if command.isGlobal && shortcut.modifiers.isEmpty {
             showShortcutMessage(L10n.string("The global shortcut must include Command, Option, Control, or Shift."))
             refreshButtons()
             NSSound.beep()
@@ -1189,7 +1199,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
             NSSound.beep()
             return
         }
-        if command == .globalToggle, let registrationError = validateGlobalShortcut(shortcut) {
+        if command.isGlobal, let registrationError = validateGlobalShortcut(shortcut, for: command) {
             showShortcutMessage(registrationError)
             refreshButtons()
             NSSound.beep()
@@ -1214,11 +1224,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
 
     private func refreshButtons() { recorderButtons.forEach { $0.refresh() } }
 
-    private func validateGlobalShortcut(_ shortcut: KeyboardShortcut) -> String? {
+    private func validateGlobalShortcut(_ shortcut: KeyboardShortcut, for command: CommandID) -> String? {
         guard let delegate = NSApp.delegate as? AppDelegate else {
             return L10n.string("The global shortcut could not be registered because the application is not ready.")
         }
-        let status = delegate.validateGlobalShortcut(shortcut)
+        let status = delegate.validateGlobalShortcut(shortcut, for: command)
         guard status != noErr else { return nil }
         return String.localizedStringWithFormat(
             L10n.string("The global shortcut could not be registered (error %lld). It may already be used by macOS or another application."),
@@ -1229,8 +1239,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     @objc private func resetOne(_ sender: NSButton) {
         guard CommandID.allCases.indices.contains(sender.tag) else { return }
         let command = CommandID.allCases[sender.tag]
-        if command == .globalToggle,
-           let error = validateGlobalShortcut(ShortcutSettings.defaultShortcut(for: command)) {
+        if command.isGlobal,
+           let error = validateGlobalShortcut(ShortcutSettings.defaultShortcut(for: command), for: command) {
             showShortcutMessage(error)
             NSSound.beep()
             return
@@ -1242,10 +1252,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     @objc private func resetAllShortcuts(_ sender: Any?) {
-        if let error = validateGlobalShortcut(ShortcutSettings.defaultShortcut(for: .globalToggle)) {
-            showShortcutMessage(error)
-            NSSound.beep()
-            return
+        for command in CommandID.globalCommands {
+            if let error = validateGlobalShortcut(ShortcutSettings.defaultShortcut(for: command), for: command) {
+                showShortcutMessage(error)
+                NSSound.beep()
+                return
+            }
         }
         ShortcutSettings.resetAll()
         showShortcutMessage(L10n.string("All shortcuts restored."), isError: false)

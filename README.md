@@ -21,6 +21,7 @@ FindAll 是一款原生 macOS 文件搜索工具，使用 Spotlight 元数据快
 - 可从文件夹搜索结果打开独立的内容窗口；窗口按文件类型以固定标题分组显示第一层项目，文稿类紧随文件夹，常用扩展名优先且同类扩展名集中排列。也可关闭分组后按表头统一排序，并支持刷新、多选和直接拖到浏览器或其他应用。
 - 打开多个所选项目时会先请求确认，避免意外同时打开大量窗口或应用。
 - 支持自定义全局呼出快捷键和结果列表操作快捷键。
+- 提供临时文件中介板：默认按 Control-Space 显示或隐藏，可拖入、拖出文件与文件夹，也可从 FindAll 文件列表的右键菜单或快捷键加入；访达可通过系统“服务”菜单加入所选项目。
 - 可配置窗口位置、窗口大小、置顶、跨空间显示、结果列布局及首选文件管理器。
 
 ### 系统要求
@@ -52,6 +53,7 @@ FindAll is a native macOS file-search utility that uses Spotlight metadata to qu
 - Open a folder result in a separate contents window; first-level items use fixed type-group headings, with documents directly after folders, common extensions first, and matching extensions kept together. Grouping can be turned off for whole-table column sorting; refresh, multiple selection, and direct dragging to browsers or other apps are also supported.
 - Confirm before opening multiple selected items to avoid unintentionally opening many windows or applications.
 - Customize the global show/hide shortcut and result-list action shortcuts.
+- Use the temporary file Shelf: press Control-Space by default to show or hide it, drag files and folders in or out, add FindAll selections from a context menu or shortcut, and send Finder selections through the system Services menu.
 - Configure window placement and size, always-on-top and all-Spaces behavior, result-column layout, and the preferred file manager.
 
 ### Requirements

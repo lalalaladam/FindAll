@@ -3,6 +3,7 @@ import QuickLookUI
 import UniformTypeIdentifiers
 
 final class FolderContentsWindowManager {
+    var onAddToShelf: (([URL]) -> Void)?
     private var controllers: [String: FolderContentsWindowController] = [:]
 
     func showContents(of folderURL: URL, relativeTo sourceWindow: NSWindow?) {
@@ -15,6 +16,7 @@ final class FolderContentsWindowManager {
         }
 
         let controller = FolderContentsWindowController(folderURL: normalizedURL)
+        controller.onAddToShelf = { [weak self] urls in self?.onAddToShelf?(urls) }
         controller.onShowFolderContents = { [weak self] url, sourceWindow in
             self?.showContents(of: url, relativeTo: sourceWindow)
         }
@@ -230,6 +232,7 @@ private final class FolderContentsFileNode {
 
 final class FolderContentsWindowController: NSWindowController, NSWindowDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuDelegate, NSMenuItemValidation {
     var onShowFolderContents: ((URL, NSWindow?) -> Void)?
+    var onAddToShelf: (([URL]) -> Void)?
     var onClose: (() -> Void)?
 
     private let folderURL: URL
@@ -419,6 +422,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         outlineView.onReveal = { [weak self] in self?.revealSelection(nil) }
         outlineView.onCopyFiles = { [weak self] in self?.copySelection(nil) }
         outlineView.onCopyPath = { [weak self] in self?.copyPath(nil) }
+        outlineView.onAddToShelf = { [weak self] in self?.addSelectionToShelf(nil) }
         outlineView.onShare = { [weak self] in self?.shareSelection(nil) }
         outlineView.onGetInfo = { [weak self] in self?.showFinderInfo(nil) }
         outlineView.onRefresh = { [weak self] in self?.refresh(nil) }
@@ -641,6 +645,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         menu.addItem(.separator())
         addMenuItem(to: menu, title: L10n.string("Copy Files"), command: .copyFiles, action: #selector(copySelection(_:)))
         addMenuItem(to: menu, title: L10n.string("Copy Path"), command: .copyPath, action: #selector(copyPath(_:)))
+        addMenuItem(to: menu, title: L10n.string("Add to Shelf"), command: .addToShelf, action: #selector(addSelectionToShelf(_:)))
         menu.addItem(.separator())
         let refresh = menu.addItem(withTitle: L10n.string("Refresh"), action: #selector(refresh(_:)), keyEquivalent: "r")
         refresh.keyEquivalentModifierMask = .command
@@ -1145,6 +1150,11 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
+    @objc private func addSelectionToShelf(_ sender: Any?) {
+        guard !selectedURLs.isEmpty else { return }
+        onAddToShelf?(selectedURLs)
+    }
+
     @objc private func shareSelection(_ sender: Any?) {
         let urls = selectedURLs
         guard !urls.isEmpty else { return }
@@ -1220,7 +1230,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(showFolderContents(_:)) { return selectedFolderURL != nil }
         if menuItem.action == #selector(refresh(_:)) { return refreshButton.isEnabled }
-        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(shareSelection(_:)), #selector(showFinderInfo(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
+        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(addSelectionToShelf(_:)), #selector(shareSelection(_:)), #selector(showFinderInfo(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
             return !selectedURLs.isEmpty
         }
         return true
@@ -1282,6 +1292,7 @@ private final class FolderContentsOutlineView: NSOutlineView {
     var onReveal: (() -> Void)?
     var onCopyFiles: (() -> Void)?
     var onCopyPath: (() -> Void)?
+    var onAddToShelf: (() -> Void)?
     var onShare: (() -> Void)?
     var onGetInfo: (() -> Void)?
     var onRefresh: (() -> Void)?
@@ -1317,6 +1328,8 @@ private final class FolderContentsOutlineView: NSOutlineView {
             onCopyFiles?()
         } else if ShortcutSettings.shortcut(for: .copyPath).matches(event) {
             onCopyPath?()
+        } else if ShortcutSettings.shortcut(for: .addToShelf).matches(event) {
+            onAddToShelf?()
         } else if ShortcutSettings.shortcut(for: .share).matches(event) {
             onShare?()
         } else if ShortcutSettings.shortcut(for: .getInfo).matches(event) {

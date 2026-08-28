@@ -3,12 +3,16 @@ import Carbon
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let relaunchDockIconEnvironmentKey = "FINDALL_RELAUNCH_SHOW_DOCK_ICON"
+    private static let hotKeySignature = OSType(0x46414C4C)
 
     private var mainWindowController: MainWindowController!
+    private var shelfWindowController: ShelfWindowController!
+    private let shelfStore = ShelfStore()
     private let folderContentsWindowManager = FolderContentsWindowManager()
     private var preferencesWindowController: PreferencesWindowController?
     private var aboutWindowController: AboutWindowController?
-    private var hotKeyRef: EventHotKeyRef?
+    private var shelfServiceProvider: ShelfServiceProvider?
+    private var hotKeyRefs: [CommandID: EventHotKeyRef] = [:]
     private var hotKeyHandlerRef: EventHandlerRef?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -24,9 +28,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = NSApp.setActivationPolicy(.regular)
         }
         mainWindowController = MainWindowController()
+        shelfWindowController = ShelfWindowController(store: shelfStore)
+        mainWindowController.onAddToShelf = { [weak self] urls in
+            self?.shelfWindowController.addAndShow(urls)
+        }
         mainWindowController.onShowFolderContents = { [weak self] url, sourceWindow in
             self?.folderContentsWindowManager.showContents(of: url, relativeTo: sourceWindow)
         }
+        folderContentsWindowManager.onAddToShelf = { [weak self] urls in
+            self?.shelfWindowController.addAndShow(urls)
+        }
+        let serviceProvider = ShelfServiceProvider { [weak self] urls in
+            self?.shelfWindowController.addAndShow(urls)
+        }
+        shelfServiceProvider = serviceProvider
+        NSApp.servicesProvider = serviceProvider
         configureMainMenu()
         refreshShortcutConfiguration()
         if !wasLaunchedAsLoginItem {
@@ -77,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addCommandItem(to: fileMenu, title: L10n.string("Open"), command: .open, action: #selector(MainWindowController.openSelection(_:)))
         addCommandItem(to: fileMenu, title: L10n.string("Show in File Manager"), command: .reveal, action: #selector(MainWindowController.revealSelection(_:)))
         addCommandItem(to: fileMenu, title: L10n.string("Copy Path"), command: .copyPath, action: #selector(MainWindowController.copyPath(_:)))
+        addCommandItem(to: fileMenu, title: L10n.string("Add to Shelf"), command: .addToShelf, action: #selector(MainWindowController.addSelectionToShelf(_:)))
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: L10n.string("Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
 
@@ -96,6 +113,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(.separator())
         let show = windowMenu.addItem(withTitle: L10n.string("Show FindAll"), action: #selector(showMainWindow(_:)), keyEquivalent: "0")
         show.target = self
+        let showShelf = windowMenu.addItem(withTitle: L10n.string("Show Shelf"), action: #selector(toggleShelf(_:)), keyEquivalent: "")
+        showShelf.target = self
         windowMenu.addItem(withTitle: L10n.string("Bring All to Front"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         NSApp.windowsMenu = windowMenu
     }
@@ -115,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func refreshShortcutConfiguration() {
-        for command in [CommandID.open, .reveal, .copyPath] {
+        for command in CommandID.allCases {
             let identifier = NSUserInterfaceItemIdentifier("command.\(command.rawValue)")
             guard let item = NSApp.mainMenu?.items
                 .compactMap(\.submenu)
@@ -127,14 +146,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         mainWindowController.refreshContextMenuShortcuts()
         folderContentsWindowManager.refreshShortcutConfiguration()
-        registerGlobalHotKey()
+        registerGlobalHotKeys()
     }
 
     func relaunchApplication(onFailure: @escaping (Error) -> Void) {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-        }
+        unregisterGlobalHotKeys()
 
         _ = UserDefaults.standard.synchronize()
         let shouldShowDockIcon = WindowPreferences.showDockIcon
@@ -156,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         if transitionedToAgent {
                             _ = NSApp.setActivationPolicy(previousActivationPolicy)
                         }
-                        self?.registerGlobalHotKey()
+                        self?.registerGlobalHotKeys()
                         onFailure(error)
                     } else {
                         NSApp.terminate(nil)
@@ -182,6 +198,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindowController.showAndFocusSearch()
     }
 
+    @objc private func toggleShelf(_ sender: Any?) {
+        shelfWindowController.toggleVisibility()
+    }
+
     @objc func showPreferences(_ sender: Any?) {
         if preferencesWindowController == nil {
             preferencesWindowController = PreferencesWindowController { [weak self] in
@@ -202,40 +222,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aboutWindowController?.window?.makeKeyAndOrderFront(nil)
     }
 
-    private func registerGlobalHotKey() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-        }
+    private func registerGlobalHotKeys() {
+        unregisterGlobalHotKeys()
         if hotKeyHandlerRef == nil {
             var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+            InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+                guard let event else { return OSStatus(eventNotHandledErr) }
+                var hotKeyID = EventHotKeyID(signature: 0, id: 0)
+                let status = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard status == noErr else { return status }
                 DispatchQueue.main.async {
                     guard let delegate = NSApp.delegate as? AppDelegate else { return }
-                    if delegate.mainWindowController.shouldHideForGlobalToggle {
-                        delegate.mainWindowController.window?.orderOut(nil)
-                    } else {
-                        delegate.showMainWindow(nil)
+                    switch hotKeyID.id {
+                    case AppDelegate.hotKeyID(for: .globalToggle):
+                        if delegate.mainWindowController.shouldHideForGlobalToggle {
+                            delegate.mainWindowController.window?.orderOut(nil)
+                        } else {
+                            delegate.showMainWindow(nil)
+                        }
+                    case AppDelegate.hotKeyID(for: .shelfToggle):
+                        delegate.toggleShelf(nil)
+                    default:
+                        break
                     }
                 }
                 return noErr
             }, 1, &eventType, nil, &hotKeyHandlerRef)
         }
 
-        let shortcut = ShortcutSettings.shortcut(for: .globalToggle)
-        let identifier = EventHotKeyID(signature: OSType(0x46414C4C), id: 1)
-        let status = RegisterEventHotKey(UInt32(shortcut.keyCode), carbonModifiers(shortcut.modifiers), identifier, GetApplicationEventTarget(), 0, &hotKeyRef)
-        if status != noErr { NSSound.beep() }
+        for command in CommandID.globalCommands {
+            let shortcut = ShortcutSettings.shortcut(for: command)
+            let identifier = EventHotKeyID(signature: Self.hotKeySignature, id: Self.hotKeyID(for: command))
+            var hotKeyRef: EventHotKeyRef?
+            let status = RegisterEventHotKey(
+                UInt32(shortcut.keyCode),
+                carbonModifiers(shortcut.modifiers),
+                identifier,
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRef
+            )
+            if status == noErr, let hotKeyRef {
+                hotKeyRefs[command] = hotKeyRef
+            } else {
+                NSSound.beep()
+            }
+        }
     }
 
-    func validateGlobalShortcut(_ shortcut: KeyboardShortcut) -> OSStatus {
-        let current = ShortcutSettings.shortcut(for: .globalToggle)
+    private func unregisterGlobalHotKeys() {
+        hotKeyRefs.values.forEach { _ = UnregisterEventHotKey($0) }
+        hotKeyRefs.removeAll()
+    }
+
+    func validateGlobalShortcut(_ shortcut: KeyboardShortcut, for command: CommandID) -> OSStatus {
+        guard command.isGlobal else { return OSStatus(paramErr) }
+        let current = ShortcutSettings.shortcut(for: command)
         if current.keyCode == shortcut.keyCode,
            current.modifiers == shortcut.modifiers,
-           hotKeyRef != nil { return noErr }
+           hotKeyRefs[command] != nil { return noErr }
 
         var candidateRef: EventHotKeyRef?
-        let identifier = EventHotKeyID(signature: OSType(0x46414C4C), id: 2)
+        let identifier = EventHotKeyID(signature: Self.hotKeySignature, id: 100 + Self.hotKeyID(for: command))
         let status = RegisterEventHotKey(
             UInt32(shortcut.keyCode),
             carbonModifiers(shortcut.modifiers),
@@ -246,6 +302,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         if let candidateRef { UnregisterEventHotKey(candidateRef) }
         return status
+    }
+
+    private static func hotKeyID(for command: CommandID) -> UInt32 {
+        switch command {
+        case .globalToggle: return 1
+        case .shelfToggle: return 2
+        default: return 0
+        }
     }
 
     private func carbonModifiers(_ flags: NSEvent.ModifierFlags) -> UInt32 {
