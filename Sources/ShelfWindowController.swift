@@ -92,7 +92,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         let contentRect = NSRect(x: 0, y: 0, width: 720, height: 420)
         let window = NSWindow(
             contentRect: contentRect,
-            styleMask: [.titled, .closable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
