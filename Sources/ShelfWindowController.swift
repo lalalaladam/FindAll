@@ -58,7 +58,7 @@ final class ShelfStore {
     }
 }
 
-final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuItemValidation {
+final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
     private enum PreferenceKey {
         static let columnWidths = "shelf.table.fittedColumnWidths.v1"
         static let columnReferenceWidth = "shelf.table.fittedColumnReferenceWidth.v1"
@@ -77,6 +77,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     private let keepOnTopSwitch = NSSwitch()
     private let allSpacesSwitch = NSSwitch()
     private let actionButtonStack = NSStackView()
+    private lazy var previewWindowController = ShelfPreviewWindowController()
     private let metadataQueue = DispatchQueue(label: "com.lalalaladam.FindAll.shelf-metadata", qos: .userInitiated)
     private var storeObserver: NSObjectProtocol?
     private var metadataByPath: [String: SearchResult] = [:]
@@ -643,7 +644,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         updateActionAvailability()
         layoutColumns()
         loadMissingMetadata()
-        QLPreviewPanel.shared()?.reloadData()
+        previewWindowController.update(urls: selectedURLs)
     }
 
     private func loadMissingMetadata() {
@@ -700,6 +701,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateActionAvailability()
+        previewWindowController.update(urls: selectedURLs)
     }
 
     func tableViewColumnDidResize(_ notification: Notification) {
@@ -724,6 +726,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     }
 
     func windowWillClose(_ notification: Notification) {
+        previewWindowController.hide()
         saveFittedColumnLayout()
         saveColumnOrder()
     }
@@ -840,29 +843,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
 
     @objc private func toggleQuickLook(_ sender: Any?) {
         guard !selectedURLs.isEmpty else { return }
-        if let panel = QLPreviewPanel.shared(), panel.isVisible {
-            panel.orderOut(nil)
-        } else {
-            QLPreviewPanel.shared()?.makeKeyAndOrderFront(nil)
-        }
-    }
-
-    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
-
-    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = self
-        panel.delegate = self
-    }
-
-    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = nil
-        panel.delegate = nil
-    }
-
-    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { selectedURLs.count }
-
-    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        selectedURLs[index] as NSURL
+        previewWindowController.toggle(urls: selectedURLs, relativeTo: window)
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -1029,6 +1010,162 @@ private final class ShelfDropView: NSView {
     }
 }
 
+private final class ShelfPreviewWindowController: NSWindowController, NSWindowDelegate {
+    private let previewView: QLPreviewView
+    private var urls: [URL] = []
+    private var currentIndex = 0
+    private var keyMonitor: Any?
+    private var didPositionWindow = false
+
+    init() {
+        let contentRect = NSRect(x: 0, y: 0, width: 880, height: 620)
+        let panel = NSPanel(
+            contentRect: contentRect,
+            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        previewView = QLPreviewView(frame: contentRect, style: .normal)
+        previewView.autoresizingMask = [.width, .height]
+        previewView.autostarts = true
+        previewView.shouldCloseWithWindow = false
+        panel.contentView = previewView
+
+        super.init(window: panel)
+
+        panel.delegate = self
+        panel.minSize = NSSize(width: 500, height: 360)
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = false
+        didPositionWindow = panel.setFrameUsingName("FindAllShelfPreviewWindowFrame")
+        panel.setFrameAutosaveName("FindAllShelfPreviewWindowFrame")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
+        previewView.close()
+    }
+
+    func toggle(urls: [URL], relativeTo sourceWindow: NSWindow?) {
+        if window?.isVisible == true {
+            hide()
+            return
+        }
+        show(urls: urls, relativeTo: sourceWindow)
+    }
+
+    func update(urls: [URL]) {
+        guard window?.isVisible == true else { return }
+        guard !urls.isEmpty else {
+            hide()
+            return
+        }
+
+        let currentURL = self.urls.indices.contains(currentIndex) ? self.urls[currentIndex] : nil
+        self.urls = urls
+        if let currentURL,
+           let preservedIndex = urls.firstIndex(where: {
+               $0.standardizedFileURL.path == currentURL.standardizedFileURL.path
+           }) {
+            currentIndex = preservedIndex
+        } else {
+            currentIndex = 0
+        }
+        updatePreviewItem()
+    }
+
+    func hide() {
+        window?.orderOut(nil)
+        stopMonitoringKeys()
+        previewView.previewItem = nil
+        urls.removeAll()
+        currentIndex = 0
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        hide()
+        return false
+    }
+
+    private func show(urls: [URL], relativeTo sourceWindow: NSWindow?) {
+        guard !urls.isEmpty, let panel = window else { return }
+        self.urls = urls
+        currentIndex = 0
+        updatePreviewItem()
+        panel.level = sourceWindow?.level ?? .normal
+        if !didPositionWindow {
+            position(panel, relativeTo: sourceWindow)
+            didPositionWindow = true
+        }
+        startMonitoringKeys()
+        panel.orderFrontRegardless()
+    }
+
+    private func updatePreviewItem() {
+        guard urls.indices.contains(currentIndex), let panel = window else { return }
+        let url = urls[currentIndex]
+        previewView.previewItem = url as NSURL
+        if urls.count == 1 {
+            panel.title = url.lastPathComponent
+        } else {
+            panel.title = "\(url.lastPathComponent) — \(currentIndex + 1)/\(urls.count)"
+        }
+    }
+
+    private func navigate(by offset: Int) {
+        guard urls.count > 1 else { return }
+        currentIndex = (currentIndex + offset + urls.count) % urls.count
+        updatePreviewItem()
+    }
+
+    private func startMonitoringKeys() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let panel = self.window, event.window === panel else { return event }
+            let modifiers = event.modifierFlags.intersection(KeyboardShortcut.supportedModifiers)
+            guard modifiers.isEmpty else { return event }
+            switch event.keyCode {
+            case 49, 53:
+                self.hide()
+                return nil
+            case 123:
+                self.navigate(by: -1)
+                return nil
+            case 124:
+                self.navigate(by: 1)
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    private func stopMonitoringKeys() {
+        guard let keyMonitor else { return }
+        NSEvent.removeMonitor(keyMonitor)
+        self.keyMonitor = nil
+    }
+
+    private func position(_ panel: NSWindow, relativeTo sourceWindow: NSWindow?) {
+        guard let visibleFrame = sourceWindow?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
+            panel.center()
+            return
+        }
+        let origin = NSPoint(
+            x: visibleFrame.midX - panel.frame.width / 2,
+            y: visibleFrame.midY - panel.frame.height / 2
+        )
+        panel.setFrameOrigin(origin)
+    }
+}
+
 private final class ShelfTableView: NSTableView {
     var onOpen: (() -> Void)?
     var onQuickLook: (() -> Void)?
@@ -1059,4 +1196,5 @@ private final class ShelfTableView: NSTableView {
             super.keyDown(with: event)
         }
     }
+
 }
