@@ -72,6 +72,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     private let scrollView = NSScrollView()
     private let emptyStateView = ShelfEmptyStateView()
     private let statusLabel = NSTextField(labelWithString: "")
+    private let selectionStatusLabel = NSTextField(labelWithString: "")
     private let removeButton = NSButton()
     private let clearButton = NSButton()
     private let keepOnTopSwitch = NSSwitch()
@@ -84,6 +85,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     private var didRestoreFrame = false
     private var hasRestoredColumnLayout = false
     private var isAdjustingColumns = false
+    private var isOpenConfirmationPresented = false
 
     init(store: ShelfStore) {
         self.store = store
@@ -184,6 +186,12 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        selectionStatusLabel.textColor = .secondaryLabelColor
+        selectionStatusLabel.font = .systemFont(ofSize: 11)
+        selectionStatusLabel.isHidden = true
+        selectionStatusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        selectionStatusLabel.setContentHuggingPriority(.required, for: .horizontal)
+
         actionButtonStack.orientation = .horizontal
         actionButtonStack.alignment = .centerY
         actionButtonStack.spacing = 8
@@ -209,7 +217,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         let footerSpacer = NSView()
         footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         footerSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let footer = NSStackView(views: [statusLabel, footerSpacer, keepOnTopControl, allSpacesControl, actionButtonStack])
+        let footer = NSStackView(views: [statusLabel, selectionStatusLabel, footerSpacer, keepOnTopControl, allSpacesControl, actionButtonStack])
         footer.orientation = .horizontal
         footer.alignment = .centerY
         footer.spacing = 10
@@ -639,6 +647,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         actionButtonStack.isHidden = isEmpty
         statusLabel.stringValue = String.localizedStringWithFormat(L10n.string("%lld items"), Int64(store.urls.count))
         updateActionAvailability()
+        updateSelectionStatus()
         layoutColumns()
         loadMissingMetadata()
         QLPreviewPanel.shared()?.reloadData()
@@ -694,10 +703,20 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         clearButton.isEnabled = !store.urls.isEmpty
     }
 
+    private func updateSelectionStatus() {
+        let selectionCount = selectedURLs.count
+        selectionStatusLabel.isHidden = selectionCount == 0
+        selectionStatusLabel.stringValue = String.localizedStringWithFormat(
+            L10n.string("%lld selected"),
+            Int64(selectionCount)
+        )
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int { store.urls.count }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateActionAvailability()
+        updateSelectionStatus()
         QLPreviewPanel.shared()?.reloadData()
     }
 
@@ -810,12 +829,50 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     }
 
     @objc private func openSelection(_ sender: Any?) {
-        guard !selectedURLs.isEmpty else { return }
-        let directories = selectedURLs.filter {
+        let urls = selectedURLs
+        guard !urls.isEmpty else { return }
+        confirmOpeningIfNeeded(itemCount: urls.count) { [weak self] in
+            self?.open(urls)
+        }
+    }
+
+    private func open(_ urls: [URL]) {
+        let directories = urls.filter {
             (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
         }
         FileManagerSupport.openFolders(directories)
-        selectedURLs.filter { !directories.contains($0) }.forEach { NSWorkspace.shared.open($0) }
+        urls.filter { !directories.contains($0) }.forEach { NSWorkspace.shared.open($0) }
+    }
+
+    private func confirmOpeningIfNeeded(itemCount: Int, action: @escaping () -> Void) {
+        guard itemCount > 1 else {
+            action()
+            return
+        }
+        guard !isOpenConfirmationPresented else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = String.localizedStringWithFormat(
+            L10n.string("Open %lld Selected Items?"),
+            Int64(itemCount)
+        )
+        alert.informativeText = L10n.string("Opening multiple items may open many windows or launch multiple applications.")
+        let openButton = alert.addButton(withTitle: L10n.string("Open"))
+        openButton.keyEquivalent = ""
+        let cancelButton = alert.addButton(withTitle: L10n.string("Cancel"))
+        cancelButton.keyEquivalent = "\r"
+
+        isOpenConfirmationPresented = true
+        guard let window else {
+            isOpenConfirmationPresented = false
+            if alert.runModal() == .alertFirstButtonReturn { action() }
+            return
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            self?.isOpenConfirmationPresented = false
+            if response == .alertFirstButtonReturn { action() }
+        }
     }
 
     @objc private func revealSelection(_ sender: Any?) {
