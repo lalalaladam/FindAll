@@ -3,9 +3,9 @@
 Follow this workflow for every stable FindAll release. Replace `X.Y.Z` with the
 intended marketing version, for example `1.0.0`.
 
-The project has not yet been created. Before the first release, verify that the
-project, scheme, product, bundle identifier, deployment target, and architectures
-below match the actual Xcode project. Update this document if they differ.
+The project is configured with the identity below. Before each release, verify that
+the project, scheme, product, bundle identifier, deployment target, and architectures
+match the actual Xcode project. Update this document if they differ.
 
 ## Expected Project Identity
 
