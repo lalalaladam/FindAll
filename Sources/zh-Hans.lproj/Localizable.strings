@@ -289,3 +289,9 @@
 "Show or hide Shelf" = "显示或隐藏中介板";
 "Temporary references; original files are never moved or deleted." = "仅临时引用；不会移动或删除原始文件。";
 "You can also add items from Finder's context menu or use the Shelf shortcut." = "也可通过访达右键菜单或中介板快捷键加入。";
+
+"Custom Extensions…" = "自定义扩展名…";
+"Enter file extensions separated by commas, such as jpg, png, webp. Do not include wildcards or paths." = "输入文件扩展名，用逗号分隔，例如 jpg, png, webp。不要输入通配符或路径。";
+"Invalid Extensions" = "扩展名格式无效";
+"Enter at least one file extension. Use letters, numbers, underscores, plus signs or hyphens; separate extensions with commas." = "请至少输入一个扩展名，可使用字母、数字、下划线、加号或连字符，多个扩展名用逗号分隔。";
+"Apply" = "应用";

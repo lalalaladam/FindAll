@@ -258,6 +258,7 @@ struct SearchRequest: Equatable {
     let pathInputs: [String]?
     let keywords: [String]?
     let keywordRelation: KeywordMatchRelation
+    let customExtensions: [String]
 }
 
 enum SearchFailure {
@@ -370,7 +371,8 @@ final class FileSearchService: NSObject {
                 matchMode: request.matchMode,
                 pathInputs: nil,
                 keywords: keywords,
-                keywordRelation: request.keywordRelation
+                keywordRelation: request.keywordRelation,
+                customExtensions: request.customExtensions
             )
             startQuery(normalizedRequest, generation: currentGeneration)
             return
@@ -389,7 +391,8 @@ final class FileSearchService: NSObject {
             matchMode: request.matchMode,
             pathInputs: nil,
             keywords: nil,
-            keywordRelation: request.keywordRelation
+            keywordRelation: request.keywordRelation,
+            customExtensions: request.customExtensions
         )
         startQuery(normalizedRequest, generation: currentGeneration)
     }
@@ -577,6 +580,14 @@ final class FileSearchService: NSObject {
         case .path:
             namePredicate = NSPredicate(value: false)
         }
+        if request.category == .customExtension {
+            let suffixes = request.customExtensions.map {
+                NSPredicate(format: "%K ENDSWITH[c] %@", NSMetadataItemFSNameKey, "." + $0)
+            }
+            let suffixPredicate = suffixes.count == 1 ? suffixes[0]
+                : NSCompoundPredicate(orPredicateWithSubpredicates: suffixes)
+            return NSCompoundPredicate(andPredicateWithSubpredicates: [namePredicate, suffixPredicate])
+        }
         guard let categoryPredicate = request.category.metadataPredicate else { return namePredicate }
         return NSCompoundPredicate(andPredicateWithSubpredicates: [namePredicate, categoryPredicate])
     }
@@ -599,6 +610,12 @@ final class FileSearchService: NSObject {
         var literalRejectedCount = 0
         results.reserveCapacity(min(query.resultCount, limit))
 
+        // The startup volume is exposed at /, whose subtree also contains mounted disks.
+        // Reject other mounts before applying the candidate limit, retaining the Data volume.
+        let otherMounts = request.scopePath == "/" ? ["/Volumes"] + (FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: nil, options: []) ?? []).map { $0.standardizedFileURL.path }
+            .filter { $0 != "/" && $0 != "/System/Volumes/Data" } : []
+
         for index in 0..<query.resultCount {
             guard let item = query.result(at: index) as? NSMetadataItem,
                   let result = makeResult(item) else {
@@ -609,6 +626,12 @@ final class FileSearchService: NSObject {
                 literalRejectedCount += 1
                 continue
             }
+            if request.category == .customExtension {
+                guard !result.isDirectory,
+                      request.customExtensions.contains(result.url.pathExtension.lowercased()) else { continue }
+            }
+            let resultPath = result.url.standardizedFileURL.path
+            guard !otherMounts.contains(where: { resultPath == $0 || resultPath.hasPrefix($0 + "/") }) else { continue }
             guard seenURLs.insert(result.url.standardizedFileURL).inserted else { continue }
             if results.count == limit {
                 return ResultConversion(

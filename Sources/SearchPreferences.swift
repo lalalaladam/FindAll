@@ -14,9 +14,11 @@ enum SearchCategory: String, CaseIterable, Codable {
     case excel
     case pdf
     case archive
+    case customExtension
 
     var title: String {
         switch self {
+        case .customExtension: return L10n.string("Custom Extensions…")
         case .all: return L10n.string("All")
         case .folder: return L10n.string("Folders")
         case .application: return L10n.string("Applications")
@@ -36,7 +38,7 @@ enum SearchCategory: String, CaseIterable, Codable {
         let typeTree = NSMetadataItemContentTypeTreeKey
         let contentType = NSMetadataItemContentTypeKey
         switch self {
-        case .all:
+        case .all, .customExtension:
             return nil
         case .folder:
             return NSCompoundPredicate(andPredicateWithSubpredicates: [
@@ -77,7 +79,7 @@ enum SearchCategory: String, CaseIterable, Codable {
 
     var metadataQueryExpression: String? {
         switch self {
-        case .all:
+        case .all, .customExtension:
             return nil
         case .folder:
             return "(kMDItemContentTypeTree == \"public.folder\" && !(kMDItemContentTypeTree == \"com.apple.application-bundle\"))"
@@ -499,6 +501,23 @@ enum FileManagerSupport {
     }
 }
 
+enum ExtensionFilter {
+    static func normalized(_ text: String) -> [String]? {
+        let tokens = text.components(separatedBy: CharacterSet.whitespacesAndNewlines
+            .union(CharacterSet(charactersIn: ",;，；")))
+            .filter { !$0.isEmpty }
+        var extensions: [String] = []
+        for token in tokens {
+            let value = (token.hasPrefix(".") ? String(token.dropFirst()) : token).lowercased()
+            guard !value.isEmpty,
+                  value.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0)
+                      || "_+-".unicodeScalars.contains($0) }) else { return nil }
+            if !extensions.contains(value) { extensions.append(value) }
+        }
+        return extensions.isEmpty ? nil : extensions
+    }
+}
+
 enum SearchPreferences {
     static let didChangeNotification = Notification.Name("FindAllSearchPreferencesDidChange")
 
@@ -519,6 +538,15 @@ enum SearchPreferences {
             UserDefaults.standard.set(newValue.rawValue, forKey: Key.category)
             notify()
         }
+    }
+
+    static var customExtensions: [String] {
+        UserDefaults.standard.stringArray(forKey: "search.customExtensions") ?? []
+    }
+
+    static func selectCustomExtensions(_ extensions: [String]) {
+        UserDefaults.standard.set(extensions, forKey: "search.customExtensions")
+        category = .customExtension
     }
 
     static var scopePath: String? {

@@ -528,8 +528,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private func rebuildCategoryMenu() {
         categoryPopup.removeAllItems()
         let selectedCategory = SearchPreferences.category
-        categoryPopup.addItem(withTitle: selectedCategory.title)
-        categoryPopup.item(at: 0)?.toolTip = selectedCategory.title
+        let selectedTitle = selectedCategory == .customExtension
+            ? SearchPreferences.customExtensions.map { "." + $0 }.joined(separator: ", ")
+            : selectedCategory.title
+        categoryPopup.addItem(withTitle: selectedTitle)
+        categoryPopup.item(at: 0)?.toolTip = selectedTitle
         for category in SearchCategory.allCases {
             let item = NSMenuItem(title: category.title, action: #selector(categoryMenuItemSelected(_:)), keyEquivalent: "")
             item.target = self
@@ -537,7 +540,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             item.state = category == selectedCategory ? .on : .off
             categoryPopup.menu?.addItem(item)
         }
-        categoryPopup.toolTip = selectedCategory.title
+        categoryPopup.toolTip = selectedTitle
     }
 
     private func refreshFilterControls() {
@@ -556,7 +559,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         allItem.state = selectedScope == nil ? .on : .off
         scopePopup.menu?.addItem(allItem)
 
-        let externalVolumes = externalVolumeURLs()
+        let internalVolumes = volumeURLs(internalOnly: true)
+        for volumeURL in internalVolumes {
+            let item = NSMenuItem(title: FileManager.default.displayName(atPath: volumeURL.path),
+                                  action: #selector(scopeMenuItemSelected(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = volumeURL.path
+            item.toolTip = volumeURL.path
+            item.state = selectedScope == volumeURL.path ? .on : .off
+            scopePopup.menu?.addItem(item)
+        }
+        let externalVolumes = volumeURLs(internalOnly: false)
         let externalPaths = externalVolumes.map(\.path)
         let externalItem = NSMenuItem(title: L10n.string("External Drives"), action: nil, keyEquivalent: "")
         let externalMenu = NSMenu(title: L10n.string("External Drives"))
@@ -580,7 +593,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         externalItem.submenu = externalMenu
         scopePopup.menu?.addItem(externalItem)
 
-        if let selectedScope, !savedPaths.contains(selectedScope), !externalPaths.contains(selectedScope) {
+        if let selectedScope, !savedPaths.contains(selectedScope), !externalPaths.contains(selectedScope), !internalVolumes.contains(where: { $0.path == selectedScope }) {
             scopePopup.menu?.addItem(.separator())
             let heading = NSMenuItem(title: L10n.string("Temporary Scope"), action: nil, keyEquivalent: "")
             heading.isEnabled = false
@@ -676,20 +689,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         return "\(name) — \(url.deletingLastPathComponent().lastPathComponent)"
     }
 
-    private func externalVolumeURLs() -> [URL] {
+    private func volumeURLs(internalOnly: Bool) -> [URL] {
         let keys: [URLResourceKey] = [.volumeIsBrowsableKey, .volumeIsInternalKey, .volumeIsLocalKey, .volumeNameKey]
         let volumes = FileManager.default.mountedVolumeURLs(
             includingResourceValuesForKeys: keys,
             options: [.skipHiddenVolumes]
         ) ?? []
-        return volumes.compactMap { volumeURL in
+        var matchingVolumes = volumes.compactMap { volumeURL -> URL? in
             guard let values = try? volumeURL.resourceValues(forKeys: Set(keys)),
                   values.volumeIsBrowsable != false,
-                  values.volumeIsInternal == false,
+                  values.volumeIsInternal == internalOnly,
                   values.volumeIsLocal != false else { return nil }
             return FilePathSupport.userFacingURL(volumeURL).standardizedFileURL
         }
-        .sorted {
+        // Always offer the startup disk, even if volume enumeration is unavailable.
+        if internalOnly, !matchingVolumes.contains(where: { $0.path == "/" }) {
+            matchingVolumes.insert(URL(fileURLWithPath: "/"), at: 0)
+        }
+        return matchingVolumes.sorted {
             FileManager.default.displayName(atPath: $0.path)
                 .localizedStandardCompare(FileManager.default.displayName(atPath: $1.path)) == .orderedAscending
         }
@@ -796,7 +813,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         column.minWidth = minimum
         column.resizingMask = .userResizingMask
         column.headerToolTip = title
-        column.sortDescriptorPrototype = NSSortDescriptor(key: identifier, ascending: true)
+        column.sortDescriptorPrototype = NSSortDescriptor(
+            key: identifier, ascending: identifier != "modified" && identifier != "size"
+        )
         tableView.addTableColumn(column)
     }
 
@@ -1401,7 +1420,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             matchMode: matchMode,
             pathInputs: nil,
             keywords: keywords,
-            keywordRelation: SearchPreferences.keywordRelation
+            keywordRelation: SearchPreferences.keywordRelation,
+            customExtensions: matchMode == .path ? [] : SearchPreferences.customExtensions
         )
     }
 
@@ -1488,8 +1508,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let selectedURLs = Set(self.selectedURLs.map(\.standardizedFileURL))
         let scrollOrigin = scrollView.contentView.bounds.origin
         let sortMode = activeSortMode
-        let foldersFirst = SearchPreferences.foldersFirst
-        let prioritizeFolderRules = SearchPreferences.prioritizeFolderRules
+        let foldersFirst = sortMode == .smart && SearchPreferences.foldersFirst
+        let prioritizeFolderRules = sortMode == .smart && SearchPreferences.prioritizeFolderRules
         let folderRules = SearchPreferences.folderRules
         let preservesPathInputOrder = lastSearchRequest?.matchMode == .path && sortMode == .smart
         let pathInputOrder = Dictionary(uniqueKeysWithValues: candidates.enumerated().map {
@@ -1537,15 +1557,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             case .kindAscending, .kindDescending:
                 comparison = lhs.kind.localizedStandardCompare(rhs.kind)
             case .sizeAscending, .sizeDescending:
+                if (lhs.size == nil) != (rhs.size == nil) { return lhs.size != nil }
                 comparison = Self.compare(lhs.size, rhs.size)
             case .modifiedAscending, .modifiedDescending:
+                if (lhs.modifiedAt == nil) != (rhs.modifiedAt == nil) { return lhs.modifiedAt != nil }
                 comparison = Self.compare(lhs.modifiedAt, rhs.modifiedAt)
             }
             if comparison == .orderedSame {
-                if sortMode == .kindAscending || sortMode == .kindDescending {
-                    let nameComparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
-                    if nameComparison != .orderedSame { return nameComparison == .orderedAscending }
-                }
+                let nameComparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
+                if nameComparison != .orderedSame { return nameComparison == .orderedAscending }
                 return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
             }
             switch sortMode {
@@ -1829,7 +1849,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     @objc private func categoryMenuItemSelected(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
               let category = SearchCategory(rawValue: rawValue) else { return }
-        SearchPreferences.category = category
+        if category == .customExtension {
+            chooseCustomExtensions()
+        } else {
+            SearchPreferences.category = category
+        }
+    }
+
+    private func chooseCustomExtensions(_ previousInput: String? = nil) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.string("Custom Extensions…")
+        alert.informativeText = L10n.string("Enter file extensions separated by commas, such as jpg, png, webp. Do not include wildcards or paths.")
+        alert.addButton(withTitle: L10n.string("Apply"))
+        alert.addButton(withTitle: L10n.string("Cancel"))
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        input.stringValue = previousInput ?? SearchPreferences.customExtensions.joined(separator: ", ")
+        input.placeholderString = "jpg, png, webp"
+        input.setAccessibilityLabel(L10n.string("Custom Extensions…"))
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            guard let extensions = ExtensionFilter.normalized(input.stringValue) else {
+                let error = NSAlert()
+                error.messageText = L10n.string("Invalid Extensions")
+                error.informativeText = L10n.string("Enter at least one file extension. Use letters, numbers, underscores, plus signs or hyphens; separate extensions with commas.")
+                error.beginSheetModal(for: window) { [weak self] _ in
+                    self?.chooseCustomExtensions(input.stringValue)
+                }
+                return
+            }
+            SearchPreferences.selectCustomExtensions(extensions)
+        }
     }
 
     @objc private func scopeMenuItemSelected(_ sender: NSMenuItem) {
