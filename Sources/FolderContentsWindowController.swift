@@ -645,6 +645,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         menu.addItem(.separator())
         addMenuItem(to: menu, title: L10n.string("Copy Files"), command: .copyFiles, action: #selector(copySelection(_:)))
         addMenuItem(to: menu, title: L10n.string("Copy Path"), command: .copyPath, action: #selector(copyPath(_:)))
+        addMenuItem(to: menu, title: L10n.string("Copy Filename"), action: #selector(copyFilename(_:)))
         addMenuItem(to: menu, title: L10n.string("Add to Shelf"), command: .addToShelf, action: #selector(addSelectionToShelf(_:)))
         menu.addItem(.separator())
         let refresh = menu.addItem(withTitle: L10n.string("Refresh"), action: #selector(refresh(_:)), keyEquivalent: "r")
@@ -657,6 +658,11 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
     private func addMenuItem(to menu: NSMenu, title: String, command: CommandID, action: Selector) {
         let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
         item.identifier = NSUserInterfaceItemIdentifier("command.\(command.rawValue)")
+        item.target = self
+    }
+
+    private func addMenuItem(to menu: NSMenu, title: String, action: Selector) {
+        let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
         item.target = self
     }
 
@@ -1150,6 +1156,13 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
+    @objc private func copyFilename(_ sender: Any?) {
+        let filenames = selectedURLs.map(\.lastPathComponent)
+        guard !filenames.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(filenames.joined(separator: "\n"), forType: .string)
+    }
+
     @objc private func addSelectionToShelf(_ sender: Any?) {
         guard !selectedURLs.isEmpty else { return }
         onAddToShelf?(selectedURLs)
@@ -1230,7 +1243,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(showFolderContents(_:)) { return selectedFolderURL != nil }
         if menuItem.action == #selector(refresh(_:)) { return refreshButton.isEnabled }
-        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(addSelectionToShelf(_:)), #selector(shareSelection(_:)), #selector(showFinderInfo(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
+        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(copyFilename(_:)), #selector(addSelectionToShelf(_:)), #selector(shareSelection(_:)), #selector(showFinderInfo(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
             return !selectedURLs.isEmpty
         }
         return true

@@ -799,6 +799,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let copyPath = menu.addItem(withTitle: L10n.string("Copy Path"), action: #selector(copyPath(_:)), keyEquivalent: "")
         copyPath.identifier = NSUserInterfaceItemIdentifier("command.copyPath")
         copyPath.target = self
+        let copyFilename = menu.addItem(withTitle: L10n.string("Copy Filename"), action: #selector(copyFilename(_:)), keyEquivalent: "")
+        copyFilename.target = self
         let addToShelf = menu.addItem(withTitle: L10n.string("Add to Shelf"), action: #selector(addSelectionToShelf(_:)), keyEquivalent: "")
         addToShelf.identifier = NSUserInterfaceItemIdentifier("command.addToShelf")
         addToShelf.target = self
@@ -2179,6 +2181,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
+    @objc private func copyFilename(_ sender: Any?) {
+        let filenames = selectedURLs.map(\.lastPathComponent)
+        guard !filenames.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(filenames.joined(separator: "\n"), forType: .string)
+    }
+
     @objc func copySelection(_ sender: Any?) {
         let urls = selectedURLs as [NSURL]
         guard !urls.isEmpty else { return }
@@ -2216,7 +2225,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         if menuItem.action == #selector(showFolderContents(_:)) {
             return selectedFolderURLForContents != nil
         }
-        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(showFinderInfo(_:)), #selector(shareSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(addSelectionToShelf(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
+        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(showFinderInfo(_:)), #selector(shareSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(copyFilename(_:)), #selector(addSelectionToShelf(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
             return !selectedURLs.isEmpty
         }
         return true

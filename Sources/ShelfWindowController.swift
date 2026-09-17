@@ -306,6 +306,10 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         addMenuItem(to: menu, title: L10n.string("Quick Look"), action: #selector(toggleQuickLook(_:)))
         addMenuItem(to: menu, title: L10n.string("Show in File Manager"), action: #selector(revealSelection(_:)))
         menu.addItem(.separator())
+        addMenuItem(to: menu, title: L10n.string("Copy Files"), action: #selector(copySelection(_:)))
+        addMenuItem(to: menu, title: L10n.string("Copy Path"), action: #selector(copyPath(_:)))
+        addMenuItem(to: menu, title: L10n.string("Copy Filename"), action: #selector(copyFilename(_:)))
+        menu.addItem(.separator())
         addMenuItem(to: menu, title: L10n.string("Remove from Shelf"), action: #selector(removeSelection(_:)))
         tableView.menu = menu
     }
@@ -880,6 +884,27 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         FileManagerSupport.reveal(selectedURLs)
     }
 
+    @objc private func copySelection(_ sender: Any?) {
+        let urls = selectedURLs as [NSURL]
+        guard !urls.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects(urls)
+    }
+
+    @objc private func copyPath(_ sender: Any?) {
+        let paths = selectedURLs.map(\.path)
+        guard !paths.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
+    }
+
+    @objc private func copyFilename(_ sender: Any?) {
+        let filenames = selectedURLs.map(\.lastPathComponent)
+        guard !filenames.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(filenames.joined(separator: "\n"), forType: .string)
+    }
+
     @objc private func removeSelection(_ sender: Any?) {
         let selection = tableView.selectedRowIndexes
         guard !selection.isEmpty else { return }
@@ -922,7 +947,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(removeSelection(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
+        if [#selector(openSelection(_:)), #selector(revealSelection(_:)), #selector(copySelection(_:)), #selector(copyPath(_:)), #selector(copyFilename(_:)), #selector(removeSelection(_:)), #selector(toggleQuickLook(_:))].contains(menuItem.action) {
             return !selectedURLs.isEmpty
         }
         return true

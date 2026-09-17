@@ -46,6 +46,7 @@
 "Commit: %@" = "提交：%@";
 "Copy Path" = "复制路径";
 "Copy Files" = "复制文件";
+"Copy Filename" = "复制文件名";
 "Copy full paths" = "复制完整路径";
 "Copy" = "复制";
 "Column widths:" = "列宽：";
