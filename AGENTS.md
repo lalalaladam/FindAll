@@ -87,6 +87,16 @@ Rules:
 - Release builds must be created from a clean, committed source state.
 - Until signing policy changes explicitly, official artifacts use ad-hoc signing and
   must not be described as Developer ID signed, notarized, or stapled.
+- Every stable release must include `FindAll.zip` and `FindAll.sha256` in addition
+  to the versioned ZIP and checksum. `FindAll.zip` must be a byte-for-byte copy of
+  that release's verified versioned ZIP; never rebuild or repackage it separately.
+- Use `https://github.com/lalalaladam/FindAll/releases/latest/download/FindAll.zip`
+  for article and other long-lived latest-version download links. Verify this link
+  resolves to the intended latest stable release after publication.
+- With explicit upload authorization, fixed-name assets may be added to an existing
+  release by downloading and verifying its published versioned ZIP and checksum.
+  Preserve existing assets, tags, and release metadata; follow the supplemental-asset
+  procedure in `STANDARD_RELEASE_WORKFLOW.md` without rebuilding the app.
 
 ## About Window
 

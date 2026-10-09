@@ -158,12 +158,30 @@ cd "Build/Release-vX.Y.Z-<BuildNumber>-<GitHash>"
 ditto -c -k --keepParent "FindAll.app" "FindAll-vX.Y.Z-arm64.zip"
 shasum -a 256 "FindAll-vX.Y.Z-arm64.zip" > "FindAll-vX.Y.Z-arm64.sha256"
 shasum -a 256 -c "FindAll-vX.Y.Z-arm64.sha256"
+cp "FindAll-vX.Y.Z-arm64.zip" "FindAll.zip"
+shasum -a 256 "FindAll.zip" > "FindAll.sha256"
+shasum -a 256 -c "FindAll.sha256"
+cmp "FindAll-vX.Y.Z-arm64.zip" "FindAll.zip"
 ```
 
 The only public release artifacts are:
 
 - `FindAll-vX.Y.Z-arm64.zip`
 - `FindAll-vX.Y.Z-arm64.sha256`
+- `FindAll.zip`
+- `FindAll.sha256`
+
+The fixed-name ZIP must be a byte-for-byte copy of the verified versioned ZIP,
+not a separate build or packaging run. Its checksum file must record `FindAll.zip`
+as the filename. The fixed name does not imply Universal or Intel support; document
+the actual architecture in the release notes and article.
+
+Use this stable latest-version URL in articles and other long-lived references:
+
+`https://github.com/lalalaladam/FindAll/releases/latest/download/FindAll.zip`
+
+Every subsequent stable release must include both fixed-name assets so this URL
+continues to work. Use the versioned asset URL when a reference must pin a version.
 
 Do not upload the raw `.app`, `.xcarchive`, DerivedData, Debug products, search data,
 preferences, or local test files.
@@ -204,7 +222,8 @@ Perform this section only with explicit user authorization.
    git push origin vX.Y.Z
    ```
 
-4. Create a GitHub Release for `vX.Y.Z` and upload only the ZIP and SHA-256 files.
+4. Create a GitHub Release for `vX.Y.Z` and upload all four ZIP and SHA-256 files
+   listed in section 5.
 
 If any tracked source file changes after the archive is built, do not reuse the artifacts.
 Commit the correction with authorization, then repeat from clean-source verification.
@@ -220,6 +239,37 @@ Before declaring the release complete, confirm:
 - The GitHub Release uses the correct tag.
 - The GitHub Release contains only the intended ZIP and checksum artifacts.
 - The published checksum matches the published ZIP.
+- The fixed-name ZIP has the same SHA-256 digest as the versioned ZIP, and its
+  checksum records the fixed filename.
+- For a release intended to be latest, the stable latest-version download URL
+  resolves successfully and returns the fixed-name ZIP from that release.
 
 Never force-push, rewrite history, delete or overwrite tags/releases, or bypass a failed
 verification without explicit user instruction.
+
+## Supplement Fixed-Name Assets on an Existing Release
+
+With explicit user authorization to upload, an already published stable release
+may receive its missing fixed-name assets without creating another release or
+rebuilding the application. This procedure only copies existing verified bytes;
+it does not prepare a new binary from the current working tree. Documentation-only
+changes for this procedure do not invalidate the previously published binary.
+
+1. Query the intended release and confirm its tag, versioned asset names, and
+   available published digests. Stop if either fixed-name asset already exists;
+   inspect it before taking any further action and never overwrite it implicitly.
+2. Download that release's versioned ZIP and SHA-256 file into a fresh temporary
+   directory. Verify the checksum and ZIP integrity; compare against the GitHub
+   asset digest when available. Stop on any mismatch.
+3. Copy the ZIP to `FindAll.zip`, generate `FindAll.sha256` with the fixed filename,
+   and verify both the checksum and byte-for-byte equality with the original ZIP.
+4. Upload only the two missing fixed-name assets to that same release. Do not use
+   `--clobber`, alter the release metadata, move tags, commit, or push as part of
+   this procedure.
+5. Verify the original assets are unchanged, the new assets have the expected
+   sizes and digests, and the downloaded published fixed-name ZIP passes its
+   published checksum. If this is the latest stable release, also verify the
+   stable latest-version URL returns the same bytes.
+6. Remove the temporary downloads after successful verification. Report the
+   supplemented release and stable download link; do not claim a new build or
+   runtime verification was performed.
