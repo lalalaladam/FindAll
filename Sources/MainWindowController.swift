@@ -1510,10 +1510,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let selectedURLs = Set(self.selectedURLs.map(\.standardizedFileURL))
         let scrollOrigin = scrollView.contentView.bounds.origin
         let sortMode = activeSortMode
-        let foldersFirst = sortMode == .smart && SearchPreferences.foldersFirst
-        let prioritizeFolderRules = sortMode == .smart && SearchPreferences.prioritizeFolderRules
+        let isPathSearch = lastSearchRequest?.matchMode == .path
+        let foldersFirst = !isPathSearch && SearchPreferences.foldersFirst
+        let prioritizeFolderRules = !isPathSearch && SearchPreferences.prioritizeFolderRules
         let folderRules = SearchPreferences.folderRules
-        let preservesPathInputOrder = lastSearchRequest?.matchMode == .path && sortMode == .smart
+        let preservesPathInputOrder = isPathSearch && sortMode == .smart
         let pathInputOrder = Dictionary(uniqueKeysWithValues: candidates.enumerated().map {
             ($0.element.url.standardizedFileURL, $0.offset)
         })
