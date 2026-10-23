@@ -311,6 +311,7 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         addMenuItem(to: menu, title: L10n.string("Copy Filename"), action: #selector(copyFilename(_:)))
         menu.addItem(.separator())
         addMenuItem(to: menu, title: L10n.string("Remove from Shelf"), action: #selector(removeSelection(_:)))
+        cloudDownloadMenu.append(to: menu)
         tableView.menu = menu
     }
 
@@ -696,6 +697,10 @@ final class ShelfWindowController: NSWindowController, NSWindowDelegate, NSTable
         guard !indexes.isEmpty else { return }
         tableView.selectRowIndexes(indexes, byExtendingSelection: false)
         tableView.scrollRowToVisible(indexes.first!)
+    }
+
+    private lazy var cloudDownloadMenu = CloudDownloadMenu { [weak self] in
+        self?.selectedURLs ?? []
     }
 
     private var selectedURLs: [URL] {

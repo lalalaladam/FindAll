@@ -296,3 +296,11 @@
 "Invalid Extensions" = "扩展名格式无效";
 "Enter at least one file extension. Use letters, numbers, underscores, plus signs or hyphens; separate extensions with commas." = "请至少输入一个扩展名，可使用字母、数字、下划线、加号或连字符，多个扩展名用逗号分隔。";
 "Apply" = "应用";
+
+"Download Now" = "现在下载";
+"Keep Downloaded" = "保留下载";
+"Remove Download" = "移除下载项";
+"iCloud Operation Failed" = "iCloud 操作失败";
+
+"This item is kept downloaded by its parent folder. Turn off Keep Downloaded on that folder:" = "此项目继承了父文件夹的保留下载设置。请在以下文件夹上取消保留下载：";
+"Kept downloaded by parent folder:" = "继承父文件夹的保留下载设置：";

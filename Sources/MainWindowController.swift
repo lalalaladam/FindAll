@@ -804,6 +804,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let addToShelf = menu.addItem(withTitle: L10n.string("Add to Shelf"), action: #selector(addSelectionToShelf(_:)), keyEquivalent: "")
         addToShelf.identifier = NSUserInterfaceItemIdentifier("command.addToShelf")
         addToShelf.target = self
+        cloudDownloadMenu.append(to: menu)
         tableView.menu = menu
         refreshContextMenuShortcuts()
     }
@@ -2040,6 +2041,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             text.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
         ])
         return cell
+    }
+
+    private lazy var cloudDownloadMenu = CloudDownloadMenu { [weak self] in
+        self?.selectedURLs ?? []
     }
 
     private var selectedURLs: [URL] {

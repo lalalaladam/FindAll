@@ -651,6 +651,7 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
         let refresh = menu.addItem(withTitle: L10n.string("Refresh"), action: #selector(refresh(_:)), keyEquivalent: "r")
         refresh.keyEquivalentModifierMask = .command
         refresh.target = self
+        cloudDownloadMenu.append(to: menu)
         outlineView.menu = menu
         refreshContextMenuShortcuts()
     }
@@ -1083,6 +1084,10 @@ final class FolderContentsWindowController: NSWindowController, NSWindowDelegate
 
     private var selectedNodes: [FolderContentsFileNode] {
         outlineView.selectedRowIndexes.compactMap(fileNode(atRow:))
+    }
+
+    private lazy var cloudDownloadMenu = CloudDownloadMenu { [weak self] in
+        self?.selectedURLs ?? []
     }
 
     private var selectedURLs: [URL] { selectedNodes.map(\.result.url) }
